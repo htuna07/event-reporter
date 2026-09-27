@@ -1,108 +1,121 @@
 # Activity Reporter
 
-Fetch GitHub repository events for a chosen contributor and time range, normalize
-them into a compact JSON format, then generate one activity report per repository
-with Anthropic.
+Activity Reporter has two independent workflows:
 
-## Workflow
+1. `ingest` discovers configured event sources, fetches raw events, converts them to a common format, and stores them in PostgreSQL.
+2. `report` queries stored events by an exact actor list and time range, then asks Anthropic to write a report.
+
+The application loads `.env` from the project directory. Variables already exported in the process environment take precedence.
+
+## Common event format
+
+Every adapter produces:
 
 ```text
-GitHub Events API → output/raw/*.json → output/normalized/*.json → output/reports/*.txt
+id
+external_id
+source
+timestamp
+actor
+action
+resource
 ```
 
-1. `main.py` fetches repository events page by page.
-2. It retains events between `from_date` and `to_date`, then filters them by the
-   configured GitHub actor.
-3. Raw GitHub API responses are written to `output/raw`.
-4. Each raw JSON array is normalized into a same-named JSON file in
-   `output/normalized`.
-5. Each normalized file is sent to Anthropic to create a text report in
-   `output/reports`.
+PostgreSQL also retains `raw_payload` as JSONB. `id` is a PostgreSQL-generated identity. Adapters provide `external_id`, which contains the source-native event ID. A unique `(source, external_id)` constraint makes repeated ingestion idempotent while allowing different sources to use the same external ID. Timestamps are stored in UTC. Ranges include the start and exclude the end.
 
-## Requirements
+### GitHub mapping
 
-- Python 3.10 or later
-- A GitHub personal access token for private repositories
-- An Anthropic API key for report generation
+- `external_id`: `id`
+- `source`: `github`
+- `timestamp`: `created_at`
+- `actor`: `actor.login`
+- `action`: event type plus its meaningful action, such as `pull_request.merged`, `pull_request_review.approved`, or `push`
+- `resource`: pull request or issue URL and title when available; otherwise repository and ref, or repository name
 
-Install dependencies:
+### CloudTrail mapping
+
+- `external_id`: `EventId`, falling back to `CloudTrailEvent.eventID`
+- `source`: `aws_cloudtrail`
+- `timestamp`: `EventTime`, falling back to `CloudTrailEvent.eventTime`
+- `actor`: `Username`, then the nested user name, ARN, or principal ID
+- `action`: `EventName`
+- `resource`: CloudTrail resource names, selected request resource identifiers, or the AWS service and region
+
+## Installation
+
+Python 3.10 or newer and PostgreSQL are required.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt requests
+pip install -r requirements.txt
 ```
-
-`requests` is used by the script and must currently be installed separately; add
-it to `requirements.txt` if this project will be set up on other machines.
 
 ## Configuration
 
-Create a `.env` file in the project root:
+### Local PostgreSQL
 
-```dotenv
-ANTHROPIC_API_KEY=your_anthropic_api_key
-GITHUB_TOKEN_TEKNODEV=your_github_token
-```
-
-Only configure a GitHub token when the corresponding repository requires it.
-Public repositories can use `None` as the third value in `owners_repositories`.
-
-In `main.py`, adjust these values in `main()`:
-
-```python
-owners_repositories = [
-    ("OWNER", "REPOSITORY", "GITHUB_TOKEN_ENV_VAR"),
-    ("PUBLIC_OWNER", "PUBLIC_REPOSITORY", None),
-]
-
-from_date = datetime.datetime(2026, 9, 25, 0, 0, 0, tzinfo=UTC)
-to_date = datetime.datetime(2026, 9, 25, 23, 59, 59, tzinfo=UTC)
-```
-
-Dates are interpreted as UTC. The selected actor is currently passed as
-`"htuna07"` to `list_github_activities`; change that value to report on another
-contributor.
-
-## Run
+Start the development database and export its connection URL into your current shell:
 
 ```bash
-python3 main.py
+source scripts/start_postgres.sh
 ```
 
-The script makes GitHub and Anthropic API requests and overwrites output files
-with matching names. Keep API keys in `.env`; it is excluded from Git.
+The script starts or reuses a persistent `activity-reporter-postgres` container, waits until PostgreSQL is ready, and exports `DATABASE_URL`. It binds to `127.0.0.1:55432` by default. To use another host port:
 
-## Normalized event format
-
-Each input file is an array of GitHub event objects. The normalizer safely reads
-optional nested fields and writes only populated values. A normalized event can
-contain:
-
-```json
-{
-  "type": "PullRequestEvent",
-  "actor": "octocat",
-  "repo_name": "OWNER/REPOSITORY",
-  "ref": "refs/heads/main",
-  "action": "closed",
-  "state": "approved",
-  "pr_branch_from": "feature/example",
-  "pr_branch_to": "main",
-  "issue_title": "Example issue",
-  "issue_comment": "Example comment",
-  "org": "OWNER"
-}
+```bash
+POSTGRES_PORT=5432 source scripts/start_postgres.sh
 ```
 
-Depending on the event type, fields such as pull-request branches, issue data,
-review state, and comments may be absent.
+The database data is retained in the `activity-reporter-postgres-data` Docker volume.
 
-## Notes and limitations
+### Application settings
 
-- Events are fetched 100 at a time and pagination stops once the newest event on
-  a page is older than `from_date`.
-- The GitHub Events API has a limited recent-event history and is not intended
-  for real-time reporting.
-- Running report generation requires `ANTHROPIC_API_KEY` and consumes Anthropic
-  API usage.
+Example `.env` contents:
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://activity_reporter:activity_reporter@127.0.0.1:55432/activity_reporter
+
+INGEST_START_TIME=2026-09-25T00:00:00Z
+INGEST_END_TIME=2026-09-26T00:00:00Z
+
+GITHUB_REPOSITORIES=Teknodev/spica-hq,spica-engine/spica
+GITHUB_TOKEN=github_token
+
+AWS_REGIONS=eu-central-1,us-east-1
+AWS_ACTORS=Tuna
+AWS_ACCESS_KEY_ID=aws_access_key
+AWS_SECRET_ACCESS_KEY=aws_secret_key
+AWS_SESSION_TOKEN=optional_session_token
+
+REPORT_ACTORS=htuna07,Tuna
+REPORT_START_TIME=2026-09-25T00:00:00Z
+REPORT_END_TIME=2026-09-26T00:00:00Z
+ANTHROPIC_API_KEY=anthropic_key
+ANTHROPIC_MODEL=your_anthropic_model
+REPORT_MAX_EVENTS=1000
+REPORT_MAX_INPUT_CHARACTERS=200000
+REPORT_OUTPUT_PATH=output/report.txt
+```
+
+`GITHUB_TOKEN` is optional for public repositories. `AWS_*` credentials use boto3's standard credential chain, so explicit keys are optional. A source is enabled when `GITHUB_REPOSITORIES` or `AWS_REGIONS` is set. CloudTrail ingestion requires `AWS_ACTORS` and applies an exact AWS `Username` filter before storing events. The legacy singular `AWS_ACTOR_USERNAME` setting is also accepted.
+
+Reports are written to `output/reports/activity-report.md` by default. Set `REPORT_OUTPUT_PATH` to use another location. The report is also printed to stdout.
+
+Report generation rejects inputs above `REPORT_MAX_EVENTS` or `REPORT_MAX_INPUT_CHARACTERS` before making an Anthropic request. Narrow the report range or deliberately raise these limits when a query exceeds them.
+
+Start PostgreSQL if needed, then invoke either workflow:
+
+```bash
+source scripts/start_postgres.sh
+python -m activity_reporter ingest
+python -m activity_reporter report
+```
+
+The ingestion command creates the table and index if absent. Alembic is intentionally omitted at this stage; add migrations before evolving a schema that contains data which must be preserved.
+
+`create_all` does not alter an existing `events` table. If the earlier composite-key schema was already created, migrate it or recreate the empty table before running this version.
+
+## Adding a source
+
+Add an adapter under `activity_reporter/adapters/` and an `EventSource` subclass under `activity_reporter/sources/`. Implement `from_environment`, `fetch`, and `adapt`, and give the source a unique name. Source modules are discovered automatically, so shared ingestion, database, query, reporting, and CLI code need no changes.
