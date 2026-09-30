@@ -1,3 +1,39 @@
+# Example Activity Report
+
+The following anonymized example shows the Markdown output produced by Activity Reporter.
+
+## Activity Report — September 29, 2026 (Example User / example-user)
+
+### Actions
+
+**Message-consumer resilience feature (`example-org/message-service`)**
+
+- Pushed several commits to `feat/message-consumer-resilience` and commented on PR #123 ("make the message trigger resilient and expose the client API")
+- Merged PR #123 and deleted the source branch
+- Closed related issue #122 ("acknowledgement methods should be void") with a closing comment
+
+**Code reviews and infrastructure PRs (`example-org`)**
+
+- Approved `cloud-infrastructure` PRs "update application resources" and "adjust network configuration"
+- Opened, pushed to `fix/allow-application-hosts`, and merged `cloud-infrastructure` PR "allow application hosts through the firewall"
+- Opened and merged `deployment-config` PR "update production deployment" with a push to `main`
+- Created branch `example-user-patch-2`, opened `deployment-config` PR "correct service configuration", and later merged it
+
+**AWS message-broker infrastructure migration (`example-region-1`)**
+
+- Extensively explored ECS, EC2, ELB, ACM, and networking resources through the console, CloudShell, and Resource Explorer to assess the existing message-broker setup
+- Created a new launch template (`message-broker-template`) and Auto Scaling group (`message-broker-asg`)
+- Created an ECS capacity provider, attached it to the message-broker ECS cluster, and then updated the Auto Scaling group
+- Deleted five stale test message-broker ECS services
+- Created a CloudFormation change set for the message-broker cluster stack to reflect the new capacity-provider setup
+- Followed up with monitoring and verification calls for ECS services and tasks, target-group health, and EKS cluster inspection to confirm the migration
+
+### Summary
+
+Example User finalized and merged the message-consumer resilience feature, handled several infrastructure-related reviews and merges across the example organization's repositories, and carried out a significant AWS infrastructure change: replacing the message-broker ECS capacity provider, cleaning up obsolete test services, and updating the CloudFormation stack, followed by verification checks.
+
+---
+
 # Activity Reporter
 
 Activity Reporter has two independent workflows:
@@ -76,26 +112,26 @@ Example `.env` contents:
 ```dotenv
 DATABASE_URL=postgresql+psycopg://activity_reporter:activity_reporter@127.0.0.1:55432/activity_reporter
 
-INGEST_START_TIME=2026-09-25T00:00:00Z
-INGEST_END_TIME=2026-09-26T00:00:00Z
+INGEST_START_TIME=2026-01-01T00:00:00Z
+INGEST_END_TIME=2026-01-02T00:00:00Z
 
-GITHUB_REPOSITORIES=Teknodev/spica-hq,spica-engine/spica
+GITHUB_REPOSITORIES=example-org/web-api,example-org/worker-service
 GITHUB_TOKEN=github_token
 
 AWS_REGIONS=eu-central-1,us-east-1
-AWS_ACTORS=Tuna
+AWS_ACTORS=example-aws-user
 AWS_ACCESS_KEY_ID=aws_access_key
 AWS_SECRET_ACCESS_KEY=aws_secret_key
 AWS_SESSION_TOKEN=optional_session_token
 
-REPORT_ACTORS=htuna07,Tuna
-REPORT_START_TIME=2026-09-25T00:00:00Z
-REPORT_END_TIME=2026-09-26T00:00:00Z
+REPORT_ACTORS=example-github-user,example-aws-user
+REPORT_START_TIME=2026-01-01T00:00:00Z
+REPORT_END_TIME=2026-01-02T00:00:00Z
 ANTHROPIC_API_KEY=anthropic_key
 ANTHROPIC_MODEL=your_anthropic_model
 REPORT_MAX_EVENTS=1000
 REPORT_MAX_INPUT_CHARACTERS=200000
-REPORT_OUTPUT_PATH=output/report.txt
+REPORT_OUTPUT_PATH=output/reports/activity-report.md
 ```
 
 `GITHUB_TOKEN` is optional for public repositories. `AWS_*` credentials use boto3's standard credential chain, so explicit keys are optional. A source is enabled when `GITHUB_REPOSITORIES` or `AWS_REGIONS` is set. CloudTrail ingestion requires `AWS_ACTORS` and applies an exact AWS `Username` filter before storing events. The legacy singular `AWS_ACTOR_USERNAME` setting is also accepted.
