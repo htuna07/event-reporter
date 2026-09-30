@@ -127,10 +127,14 @@ AWS_SESSION_TOKEN=optional_session_token
 REPORT_ACTORS=example-github-user,example-aws-user
 REPORT_START_TIME=2026-01-01T00:00:00Z
 REPORT_END_TIME=2026-01-02T00:00:00Z
+REPORT_PROVIDER=anthropic
 ANTHROPIC_API_KEY=anthropic_key
 ANTHROPIC_MODEL=your_anthropic_model
+OPENAI_API_KEY=openai_key
+OPENAI_MODEL=your_openai_model
 REPORT_MAX_EVENTS=1000
 REPORT_MAX_INPUT_CHARACTERS=200000
+REPORT_MAX_TOKENS=1500
 REPORT_OUTPUT_PATH=output/reports/activity-report.md
 ```
 
@@ -138,7 +142,7 @@ REPORT_OUTPUT_PATH=output/reports/activity-report.md
 
 Reports are written to `output/reports/activity-report.md` by default. Set `REPORT_OUTPUT_PATH` to use another location. The report is also printed to stdout.
 
-Report generation rejects inputs above `REPORT_MAX_EVENTS` or `REPORT_MAX_INPUT_CHARACTERS` before making an Anthropic request. Narrow the report range or deliberately raise these limits when a query exceeds them.
+Report generation defaults to Anthropic. Set `REPORT_PROVIDER=openai` to use OpenAI instead; only the selected provider's API key and model are required. Both providers use the same input limits and report format. Report generation rejects inputs above `REPORT_MAX_EVENTS` or `REPORT_MAX_INPUT_CHARACTERS` before making a provider request. Narrow the report range or deliberately raise these limits when a query exceeds them.
 
 Start PostgreSQL if needed, then invoke either workflow:
 

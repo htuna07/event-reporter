@@ -78,8 +78,9 @@ class ReportSettings:
     actors: tuple[str, ...]
     start: datetime
     end: datetime
-    anthropic_api_key: str
-    anthropic_model: str
+    provider: str
+    api_key: str
+    model: str
     max_events: int
     max_input_characters: int
     max_tokens: int
@@ -90,6 +91,16 @@ class ReportSettings:
         actors = comma_separated(require(environment, "REPORT_ACTORS"))
         if not actors:
             raise ValueError("REPORT_ACTORS must contain at least one actor.")
+        provider = environment.get("REPORT_PROVIDER", "anthropic").strip().lower()
+        provider_settings = {
+            "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"),
+            "openai": ("OPENAI_API_KEY", "OPENAI_MODEL"),
+        }
+        if provider not in provider_settings:
+            raise ValueError(
+                "REPORT_PROVIDER must be one of: anthropic, openai."
+            )
+        api_key_name, model_name = provider_settings[provider]
         output = environment.get(
             "REPORT_OUTPUT_PATH",
             "output/reports/activity-report.md",
@@ -102,8 +113,9 @@ class ReportSettings:
             end=parse_datetime(
                 require(environment, "REPORT_END_TIME"), "REPORT_END_TIME"
             ),
-            anthropic_api_key=require(environment, "ANTHROPIC_API_KEY"),
-            anthropic_model=require(environment, "ANTHROPIC_MODEL"),
+            provider=provider,
+            api_key=require(environment, api_key_name),
+            model=require(environment, model_name),
             max_events=positive_integer(
                 environment,
                 "REPORT_MAX_EVENTS",

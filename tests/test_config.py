@@ -26,6 +26,9 @@ class SettingsTest(unittest.TestCase):
 
         self.assertEqual(settings.actors, ("htuna07", "Tuna"))
         self.assertEqual(settings.start.tzinfo, timezone.utc)
+        self.assertEqual(settings.provider, "anthropic")
+        self.assertEqual(settings.api_key, "key")
+        self.assertEqual(settings.model, "model")
         self.assertEqual(settings.max_events, 1_000)
         self.assertEqual(settings.max_input_characters, 200_000)
         self.assertEqual(
@@ -45,6 +48,33 @@ class SettingsTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "REPORT_MAX_EVENTS"):
             ReportSettings.from_environment(values)
+
+    def test_openai_report_settings_require_only_openai_configuration(self) -> None:
+        settings = ReportSettings.from_environment(
+            {
+                "REPORT_PROVIDER": "openai",
+                "REPORT_ACTORS": "actor",
+                "REPORT_START_TIME": "2026-09-25T00:00:00Z",
+                "REPORT_END_TIME": "2026-09-26T00:00:00Z",
+                "OPENAI_API_KEY": "key",
+                "OPENAI_MODEL": "model",
+            }
+        )
+
+        self.assertEqual(settings.provider, "openai")
+        self.assertEqual(settings.api_key, "key")
+        self.assertEqual(settings.model, "model")
+
+    def test_report_settings_reject_unknown_provider(self) -> None:
+        with self.assertRaisesRegex(ValueError, "REPORT_PROVIDER"):
+            ReportSettings.from_environment(
+                {
+                    "REPORT_PROVIDER": "unsupported",
+                    "REPORT_ACTORS": "actor",
+                    "REPORT_START_TIME": "2026-09-25T00:00:00Z",
+                    "REPORT_END_TIME": "2026-09-26T00:00:00Z",
+                }
+            )
 
     def test_ingestion_rejects_an_empty_range(self) -> None:
         with self.assertRaises(ValueError):

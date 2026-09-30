@@ -52,7 +52,7 @@ Loads `.env`, then reads and validates configuration from process environment va
 - `comma_separated`: Converts comma-separated configuration into a tuple.
 - `DatabaseSettings.from_environment`: Reads `DATABASE_URL`.
 - `IngestionSettings.from_environment`: Reads and validates the ingestion time range.
-- `ReportSettings.from_environment`: Reads actors, report range, Anthropic settings, input limits, and the output path.
+- `ReportSettings.from_environment`: Reads actors, report range, selected report-provider settings, input limits, and the output path.
 - `environment`: Loads `.env` without overriding exported values, then returns the process environment.
 
 ## Domain models
@@ -193,7 +193,7 @@ Coordinates ingestion without depending on a particular event source.
 - `__init__`: Receives an event writer and batch size.
 - `ingest`: Fetches raw payloads, adapts them, stores them in batches, and returns the processed count.
 
-### `activity_reporter/reporting.py`
+### `activity_reporter/reporting.py` and `activity_reporter/reporters/`
 
 Coordinates database querying and report generation.
 
@@ -201,10 +201,11 @@ Coordinates database querying and report generation.
 
 Defines the interface implemented by an LLM report generator.
 
-#### `AnthropicReportGenerator`
+#### Report generator strategies
 
-- `__init__`: Creates the Anthropic client and stores the model name.
-- `generate`: Sends normalized events, actors, and the time range to Anthropic.
+- `reporting.py` contains `ReportService`, which remains unaware of the selected provider.
+- `reporters/factory.py` selects Anthropic (default) or OpenAI from `REPORT_PROVIDER`.
+- `reporters/base.py` validates and serializes report inputs once for every provider; each provider implementation owns only its SDK call.
 
 #### `ReportService`
 
@@ -247,7 +248,7 @@ For `report`:
 Read configuration
     → connect to PostgreSQL
     → query actors and time range
-    → send events to Anthropic
+    → generate a report through the selected provider
     → print report
     → optionally write report to a file
 ```
@@ -305,7 +306,8 @@ EventRepository.find
 ReportService
         │ common fields only
         ▼
-AnthropicReportGenerator
+Selected report generator
+        │ Anthropic or OpenAI
         │
         ▼
 Text report

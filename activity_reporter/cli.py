@@ -9,7 +9,8 @@ from activity_reporter.config import (
 )
 from activity_reporter.database import build_repository
 from activity_reporter.ingestion import IngestionService
-from activity_reporter.reporting import AnthropicReportGenerator, ReportService
+from activity_reporter.reporting import ReportService
+from activity_reporter.reporters import build_report_generator
 from activity_reporter.sources.discovery import discover_sources
 
 
@@ -45,13 +46,7 @@ def main() -> None:
         return
 
     settings = ReportSettings.from_environment(values)
-    generator = AnthropicReportGenerator(
-        api_key=settings.anthropic_api_key,
-        model=settings.anthropic_model,
-        max_events=settings.max_events,
-        max_input_characters=settings.max_input_characters,
-        max_tokens=settings.max_tokens,
-    )
+    generator = build_report_generator(settings)
     report = ReportService(repository, generator).create(
         settings.actors,
         settings.start,
