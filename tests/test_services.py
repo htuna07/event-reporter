@@ -110,6 +110,7 @@ class ServiceTest(unittest.TestCase):
             model="model",
             max_events=1,
             max_input_characters=10_000,
+            max_tokens=1_500,
         )
 
         with self.assertRaisesRegex(ValueError, "REPORT_MAX_EVENTS"):
@@ -126,6 +127,7 @@ class ServiceTest(unittest.TestCase):
             model="model",
             max_events=10,
             max_input_characters=10,
+            max_tokens=1_500,
         )
 
         with self.assertRaisesRegex(ValueError, "REPORT_MAX_INPUT_CHARACTERS"):

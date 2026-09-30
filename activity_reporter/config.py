@@ -68,7 +68,8 @@ class IngestionSettings:
             ),
         )
         if settings.start >= settings.end:
-            raise ValueError("INGEST_START_TIME must be before INGEST_END_TIME.")
+            raise ValueError(
+                "INGEST_START_TIME must be before INGEST_END_TIME.")
         return settings
 
 
@@ -81,6 +82,7 @@ class ReportSettings:
     anthropic_model: str
     max_events: int
     max_input_characters: int
+    max_tokens: int
     output_path: Path
 
     @classmethod
@@ -112,10 +114,16 @@ class ReportSettings:
                 "REPORT_MAX_INPUT_CHARACTERS",
                 200_000,
             ),
+            max_tokens=positive_integer(
+                environment,
+                "REPORT_MAX_TOKENS",
+                1500,
+            ),
             output_path=Path(output),
         )
         if settings.start >= settings.end:
-            raise ValueError("REPORT_START_TIME must be before REPORT_END_TIME.")
+            raise ValueError(
+                "REPORT_START_TIME must be before REPORT_END_TIME.")
         return settings
 
 

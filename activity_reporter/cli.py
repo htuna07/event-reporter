@@ -18,7 +18,8 @@ def main() -> None:
     parser.add_argument("command", choices=("ingest", "report"))
     arguments = parser.parse_args()
     values = environment()
-    repository = build_repository(DatabaseSettings.from_environment(values).url)
+    repository = build_repository(
+        DatabaseSettings.from_environment(values).url)
 
     if arguments.command == "ingest":
         repository.create_schema()
@@ -38,7 +39,8 @@ def main() -> None:
                 settings.start,
                 settings.end,
             )
-            print(f"Ingested {result[source.name]} {source.name} events.", flush=True)
+            print(
+                f"Ingested {result[source.name]} {source.name} events.", flush=True)
         print(json.dumps(result, indent=2))
         return
 
@@ -48,6 +50,7 @@ def main() -> None:
         model=settings.anthropic_model,
         max_events=settings.max_events,
         max_input_characters=settings.max_input_characters,
+        max_tokens=settings.max_tokens,
     )
     report = ReportService(repository, generator).create(
         settings.actors,

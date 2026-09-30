@@ -26,11 +26,13 @@ class AnthropicReportGenerator:
         model: str,
         max_events: int,
         max_input_characters: int,
+        max_tokens: int,
     ) -> None:
         self.client = Anthropic(api_key=api_key)
         self.model = model
         self.max_events = max_events
         self.max_input_characters = max_input_characters
+        self.max_tokens = max_tokens
 
     def generate(
         self,
@@ -63,7 +65,7 @@ class AnthropicReportGenerator:
             )
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=1500,
+            max_tokens=self.max_tokens,
             system=(
                 "You create concise activity reports from normalized event logs. "
                 "Use only the supplied events. Group related work instead of describing "
