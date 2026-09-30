@@ -6,7 +6,10 @@ import boto3
 
 from activity_reporter.adapters.cloudtrail import CloudTrailAdapter
 from activity_reporter.config import comma_separated
+from activity_reporter.logging import get_logger
 from activity_reporter.sources.base import EventSource
+
+logger = get_logger(__name__)
 
 
 class CloudTrailSource(EventSource):
@@ -47,9 +50,11 @@ class CloudTrailSource(EventSource):
 
     def fetch(self, start: datetime, end: datetime) -> Iterable[dict[str, Any]]:
         for region in self.regions:
+            logger.debug("cloudtrail.region_fetch_started", region=region)
             client = self.session.client("cloudtrail", region_name=region)
             paginator = client.get_paginator("lookup_events")
             for actor in self.actors:
+                logger.debug("cloudtrail.actor_lookup_started", region=region)
                 for page in paginator.paginate(
                     StartTime=start,
                     EndTime=end,
@@ -60,7 +65,13 @@ class CloudTrailSource(EventSource):
                         }
                     ],
                 ):
-                    for event in page.get("Events", []):
+                    events = page.get("Events", [])
+                    logger.debug(
+                        "cloudtrail.page_fetched",
+                        region=region,
+                        event_count=len(events),
+                    )
+                    for event in events:
                         event_time = event.get("EventTime")
                         if not isinstance(event_time, datetime):
                             raise TypeError("CloudTrail event has no valid EventTime.")

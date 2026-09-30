@@ -7,7 +7,10 @@ import requests
 
 from activity_reporter.adapters.github import GitHubAdapter
 from activity_reporter.config import comma_separated, parse_datetime
+from activity_reporter.logging import get_logger
 from activity_reporter.sources.base import EventSource
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +55,10 @@ class GitHubSource(EventSource):
 
     def fetch(self, start: datetime, end: datetime) -> Iterable[dict[str, Any]]:
         for repository in self.repositories:
+            logger.debug(
+                "github.repository_fetch_started",
+                repository=f"{repository.owner}/{repository.name}",
+            )
             yield from self._fetch_repository(repository, start, end)
 
     def _fetch_repository(
@@ -71,7 +78,18 @@ class GitHubSource(EventSource):
             events = response.json()
             if not isinstance(events, list):
                 raise TypeError("GitHub returned a non-list events response.")
+            logger.debug(
+                "github.page_fetched",
+                repository=f"{repository.owner}/{repository.name}",
+                page=page,
+                event_count=len(events),
+            )
             if not events:
+                logger.debug(
+                    "github.repository_fetch_completed",
+                    repository=f"{repository.owner}/{repository.name}",
+                    stop_reason="empty_page",
+                )
                 return
 
             timestamps = [
@@ -82,6 +100,11 @@ class GitHubSource(EventSource):
                 if start <= timestamp < end:
                     yield event
             if min(timestamps) < start:
+                logger.debug(
+                    "github.repository_fetch_completed",
+                    repository=f"{repository.owner}/{repository.name}",
+                    stop_reason="range_reached",
+                )
                 return
             page += 1
 

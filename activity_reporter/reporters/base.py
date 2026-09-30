@@ -5,6 +5,9 @@ from datetime import datetime
 from typing import Protocol
 
 from activity_reporter.domain import StoredEvent
+from activity_reporter.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 REPORT_INSTRUCTIONS = (
@@ -45,6 +48,11 @@ class BaseReportGenerator:
         start: datetime,
         end: datetime,
     ) -> str:
+        logger.debug(
+            "report.input_validating",
+            event_count=len(events),
+            max_events=self.parameters.max_events,
+        )
         if len(events) > self.parameters.max_events:
             raise ValueError(
                 f"Report query returned {len(events)} events, exceeding "
@@ -67,6 +75,11 @@ class BaseReportGenerator:
                 f"{self.parameters.max_input_characters}. Narrow the report range or increase "
                 "the configured limit."
             )
+        logger.debug(
+            "report.input_prepared",
+            event_count=len(events),
+            input_characters=len(input_data),
+        )
         return self._generate(input_data)
 
     def _generate(self, input_data: str) -> str:

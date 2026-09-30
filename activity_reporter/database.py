@@ -17,6 +17,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from activity_reporter.domain import NormalizedEvent, StoredEvent
+from activity_reporter.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -89,6 +92,11 @@ class EventRepository:
         with Session(self.engine) as session:
             session.execute(statement)
             session.commit()
+        logger.debug(
+            "database.events_upserted",
+            received_count=len(events),
+            unique_count=len(values),
+        )
         return len(values)
 
     def find(
@@ -108,6 +116,13 @@ class EventRepository:
         )
         with Session(self.engine) as session:
             rows = session.scalars(statement).all()
+        logger.debug(
+            "database.events_found",
+            actor_count=len(actors),
+            start=start.isoformat(),
+            end=end.isoformat(),
+            result_count=len(rows),
+        )
         return [
             StoredEvent(
                 id=row.id,
@@ -124,4 +139,6 @@ class EventRepository:
 
 
 def build_repository(database_url: str) -> EventRepository:
-    return EventRepository(create_engine(database_url, pool_pre_ping=True))
+    repository = EventRepository(create_engine(database_url, pool_pre_ping=True))
+    logger.debug("database.repository_initialized", dialect=repository.engine.dialect.name)
+    return repository

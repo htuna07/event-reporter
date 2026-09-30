@@ -152,6 +152,22 @@ python -m activity_reporter ingest
 python -m activity_reporter report
 ```
 
+## Logging
+
+Operational logs go to stdout as human-readable text by default. Use `--debug`
+to include diagnostic messages, `--log-format json` for JSON Lines, and
+`--log-output PATH` to append logs to a file instead:
+
+```bash
+python -m activity_reporter ingest --debug --log-format json \
+  --log-output logs/activity-reporter.log
+```
+
+`--log-output stdout` is the default. Log entries contain the same timestamp,
+level, logger name, message, and context fields in both text and JSON formats.
+They never include credentials, connection URLs, request headers, raw event
+payloads, or report prompts.
+
 The ingestion command creates the table and index if absent. Alembic is intentionally omitted at this stage; add migrations before evolving a schema that contains data which must be preserved.
 
 `create_all` does not alter an existing `events` table. If the earlier composite-key schema was already created, migrate it or recreate the empty table before running this version.
