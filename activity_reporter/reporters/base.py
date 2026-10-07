@@ -10,13 +10,17 @@ from activity_reporter.logging import get_logger
 logger = get_logger(__name__)
 
 
-REPORT_INSTRUCTIONS = (
-    "You create concise activity reports from normalized event logs. "
-    "Use only the supplied events. Group related work instead of describing "
-    "every event separately. Return a title, an Actions bullet list, and a "
-    "short Summary. If there are no events, return a title followed only by "
-    "Nothing has been done."
-)
+REPORT_INSTRUCTIONS = """
+You create activity reports from normalized event logs.
+Use only the supplied events.
+Group related work instead of describing every event separately.
+Give priority to write, create, update, and collaboration events;
+treat read-only events as operational activities.
+Return a title, an Actions bullet list, and a short Summary.
+Each bullet in the actions must start past tense.
+Each bullet must focus on what was done.
+If there are no events, return a title followed only by 'Nothing has been done.'
+"""
 
 
 class ReportGenerator(Protocol):
@@ -64,7 +68,10 @@ class BaseReportGenerator:
                 "actors": list(actors),
                 "start": start.isoformat(),
                 "end": end.isoformat(),
-                "events": [event.common_fields() for event in events],
+                "events": [
+                    event.common_fields()
+                    for event in sorted(events, key=_report_order)
+                ],
             },
             ensure_ascii=False,
         )
@@ -84,3 +91,16 @@ class BaseReportGenerator:
 
     def _generate(self, input_data: str) -> str:
         raise NotImplementedError
+
+
+def _report_order(event: StoredEvent) -> tuple[int, datetime]:
+    priority = {
+        "failed": 0,
+        "delete": 1,
+        "write": 1,
+        "collaboration": 2,
+        "authentication": 3,
+        "read": 4,
+    }
+    category = "failed" if event.outcome == "failed" else event.activity_kind or ""
+    return (priority.get(category, 2), event.timestamp)

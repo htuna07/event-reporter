@@ -35,6 +35,8 @@ class EventRow(Base):
             name="uq_events_source_external_id",
         ),
         Index("ix_events_actor_timestamp", "actor", "timestamp"),
+        Index("ix_events_activity_timestamp", "activity_kind", "timestamp"),
+        Index("ix_events_service_region_timestamp", "service", "region", "timestamp"),
     )
 
     id: Mapped[int] = mapped_column(
@@ -49,6 +51,20 @@ class EventRow(Base):
     action: Mapped[str] = mapped_column(String(255), nullable=False)
     resource: Mapped[str] = mapped_column(Text, nullable=False)
     raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    event_type: Mapped[str | None] = mapped_column(String(128))
+    event_action: Mapped[str | None] = mapped_column(String(128))
+    activity_kind: Mapped[str | None] = mapped_column(String(32))
+    outcome: Mapped[str | None] = mapped_column(String(32))
+    service: Mapped[str | None] = mapped_column(String(128))
+    region: Mapped[str | None] = mapped_column(String(64))
+    resource_type: Mapped[str | None] = mapped_column(String(128))
+    resource_id: Mapped[str | None] = mapped_column(String(512))
+    resource_name: Mapped[str | None] = mapped_column(Text)
+    resource_url: Mapped[str | None] = mapped_column(Text)
+    title: Mapped[str | None] = mapped_column(Text)
+    content_excerpt: Mapped[str | None] = mapped_column(Text)
+    correlation_id: Mapped[str | None] = mapped_column(String(512))
+    attributes: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class EventRepository:
@@ -75,6 +91,20 @@ class EventRepository:
                 "action": event.action,
                 "resource": event.resource,
                 "raw_payload": event.raw_payload,
+                "event_type": event.event_type,
+                "event_action": event.event_action,
+                "activity_kind": event.activity_kind,
+                "outcome": event.outcome,
+                "service": event.service,
+                "region": event.region,
+                "resource_type": event.resource_type,
+                "resource_id": event.resource_id,
+                "resource_name": event.resource_name,
+                "resource_url": event.resource_url,
+                "title": event.title,
+                "content_excerpt": event.content_excerpt,
+                "correlation_id": event.correlation_id,
+                "attributes": event.attributes,
             }
             for event in unique_events
         ]
@@ -87,6 +117,20 @@ class EventRepository:
                 "action": statement.excluded.action,
                 "resource": statement.excluded.resource,
                 "raw_payload": statement.excluded.raw_payload,
+                "event_type": statement.excluded.event_type,
+                "event_action": statement.excluded.event_action,
+                "activity_kind": statement.excluded.activity_kind,
+                "outcome": statement.excluded.outcome,
+                "service": statement.excluded.service,
+                "region": statement.excluded.region,
+                "resource_type": statement.excluded.resource_type,
+                "resource_id": statement.excluded.resource_id,
+                "resource_name": statement.excluded.resource_name,
+                "resource_url": statement.excluded.resource_url,
+                "title": statement.excluded.title,
+                "content_excerpt": statement.excluded.content_excerpt,
+                "correlation_id": statement.excluded.correlation_id,
+                "attributes": statement.excluded.attributes,
             },
         )
         with Session(self.engine) as session:
@@ -133,6 +177,20 @@ class EventRepository:
                 action=row.action,
                 resource=row.resource,
                 raw_payload=row.raw_payload,
+                event_type=row.event_type,
+                event_action=row.event_action,
+                activity_kind=row.activity_kind,
+                outcome=row.outcome,
+                service=row.service,
+                region=row.region,
+                resource_type=row.resource_type,
+                resource_id=row.resource_id,
+                resource_name=row.resource_name,
+                resource_url=row.resource_url,
+                title=row.title,
+                content_excerpt=row.content_excerpt,
+                correlation_id=row.correlation_id,
+                attributes=row.attributes,
             )
             for row in rows
         ]

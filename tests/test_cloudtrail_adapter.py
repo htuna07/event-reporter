@@ -17,7 +17,10 @@ class CloudTrailAdapterTest(unittest.TestCase):
                         "userIdentity": {"arn": "arn:aws:iam::123:user/Tuna"},
                         "eventSource": "lambda.amazonaws.com",
                         "awsRegion": "eu-central-1",
-                        "requestParameters": {"functionName": "processor"},
+                        "requestParameters": {
+                            "functionName": "processor",
+                            "RefreshToken": "must-not-be-retained",
+                        },
                     }
                 ),
             }
@@ -28,6 +31,16 @@ class CloudTrailAdapterTest(unittest.TestCase):
         self.assertEqual(event.actor, "arn:aws:iam::123:user/Tuna")
         self.assertEqual(event.action, "UpdateFunctionCode")
         self.assertEqual(event.resource, "processor")
+        self.assertEqual(event.service, "lambda")
+        self.assertEqual(event.region, "eu-central-1")
+        self.assertEqual(event.activity_kind, "write")
+        self.assertEqual(event.resource_type, "functionName")
+        self.assertEqual(event.raw_payload["CloudTrailEvent"], {
+            "userIdentity": {"arn": "arn:aws:iam::123:user/Tuna"},
+            "eventSource": "lambda.amazonaws.com",
+            "awsRegion": "eu-central-1",
+            "requestParameters": {"functionName": "processor", "RefreshToken": "[REDACTED]"},
+        })
         self.assertEqual(event.raw_payload["EventTime"], "2026-09-25T12:00:00+00:00")
 
     def test_maps_aws_service_identity(self) -> None:

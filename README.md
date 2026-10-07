@@ -57,7 +57,19 @@ action
 resource
 ```
 
-PostgreSQL also retains `raw_payload` as JSONB. `id` is a PostgreSQL-generated identity. Adapters provide `external_id`, which contains the source-native event ID. A unique `(source, external_id)` constraint makes repeated ingestion idempotent while allowing different sources to use the same external ID. Timestamps are stored in UTC. Ranges include the start and exclude the end.
+It also records optional structured context when available: event type/action,
+activity kind and outcome, service and region, typed resource identifiers,
+safe source-specific attributes, correlation identifiers, and a bounded safe
+content excerpt. Reports use these fields to prioritize mutations and failures
+over read-only activity.
+
+PostgreSQL also retains a redacted `raw_payload` as JSONB. Credential-like
+values and GitHub free-text bodies are removed before persistence. `id` is a
+PostgreSQL-generated identity. Adapters provide `external_id`, which contains
+the source-native event ID. A unique `(source, external_id)` constraint makes
+repeated ingestion idempotent while allowing different sources to use the same
+external ID. Timestamps are stored in UTC. Ranges include the start and exclude
+the end.
 
 ### GitHub mapping
 
@@ -168,9 +180,22 @@ level, logger name, message, and context fields in both text and JSON formats.
 They never include credentials, connection URLs, request headers, raw event
 payloads, or report prompts.
 
-The ingestion command creates the table and index if absent. Alembic is intentionally omitted at this stage; add migrations before evolving a schema that contains data which must be preserved.
+The ingestion command creates the table and index if absent. For an existing
+database, apply schema changes before ingestion:
 
-`create_all` does not alter an existing `events` table. If the earlier composite-key schema was already created, migrate it or recreate the empty table before running this version.
+```bash
+python -m alembic upgrade head
+```
+
+To redact already-retained payloads and the saved source snapshot without
+printing their contents, run:
+
+```bash
+python -m scripts.redact_raw_payloads
+```
+
+`create_all` does not alter an existing `events` table, so migrations remain
+required for existing installations.
 
 ## Adding a source
 
