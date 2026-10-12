@@ -38,7 +38,7 @@ Example User finalized and merged the message-consumer resilience feature, handl
 
 Activity Reporter has two independent workflows:
 
-1. `ingest` discovers configured event sources, fetches raw events, converts them to a common format, and stores them in PostgreSQL.
+1. `ingest` discovers configured event sources, fetches raw events, converts them to a common format, and stores them in PostgreSQL or SQLite.
 2. `report` queries stored events by an exact actor list and time range, then asks Anthropic to write a report.
 
 The application loads `.env` from the project directory. Variables already exported in the process environment take precedence.
@@ -63,10 +63,10 @@ safe source-specific attributes, correlation identifiers, and a bounded safe
 content excerpt. Reports use these fields to prioritize mutations and failures
 over read-only activity.
 
-PostgreSQL also retains a redacted `raw_payload` as JSONB. Credential-like
-values and GitHub free-text bodies are removed before persistence. `id` is a
-PostgreSQL-generated identity. Adapters provide `external_id`, which contains
-the source-native event ID. A unique `(source, external_id)` constraint makes
+The database retains a redacted `raw_payload` as JSON (JSONB on PostgreSQL).
+Credential-like values and GitHub free-text bodies are removed before
+persistence. `id` is database-generated. Adapters provide `external_id`, which
+contains the source-native event ID. A unique `(source, external_id)` constraint makes
 repeated ingestion idempotent while allowing different sources to use the same
 external ID. Timestamps are stored in UTC. Ranges include the start and exclude
 the end.
@@ -91,7 +91,8 @@ the end.
 
 ## Installation
 
-Python 3.10 or newer and PostgreSQL are required.
+Python 3.10 or newer is required. The application supports PostgreSQL and
+SQLite.
 
 ```bash
 python3 -m venv .venv
@@ -100,6 +101,23 @@ pip install -r requirements.txt
 ```
 
 ## Configuration
+
+### Database selection
+
+Set `DATABASE_URL` to select a database. PostgreSQL remains supported:
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://activity_reporter:activity_reporter@127.0.0.1:55432/activity_reporter
+```
+
+Use a SQLite file for a local or temporary database:
+
+```dotenv
+DATABASE_URL=sqlite:///output/activity-reporter.db
+```
+
+The application creates parent directories for file-backed SQLite URLs. A
+SQLite file on a GitHub Actions runner does not persist after the job ends.
 
 ### Local PostgreSQL
 
@@ -180,8 +198,9 @@ level, logger name, message, and context fields in both text and JSON formats.
 They never include credentials, connection URLs, request headers, raw event
 payloads, or report prompts.
 
-The ingestion command creates the table and index if absent. For an existing
-database, apply schema changes before ingestion:
+The ingestion command creates the table and indexes if absent. For an existing
+database, apply schema changes before ingestion. The migrations support both
+PostgreSQL and SQLite:
 
 ```bash
 python -m alembic upgrade head

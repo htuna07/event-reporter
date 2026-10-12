@@ -1,20 +1,25 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import (
     BigInteger,
     DateTime,
     Identity,
     Index,
+    Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
     create_engine,
     select,
 )
-from sqlalchemy.dialects.postgresql import JSONB, insert
-from sqlalchemy.engine import Engine
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import Engine, URL, make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.types import TypeDecorator
 
 from activity_reporter.domain import NormalizedEvent, StoredEvent
 from activity_reporter.logging import get_logger
@@ -24,6 +29,36 @@ logger = get_logger(__name__)
 
 class Base(DeclarativeBase):
     pass
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    impl = DateTime
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        return dialect.type_descriptor(DateTime(timezone=True))
+
+    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError("Event timestamps must be timezone-aware.")
+        return value.astimezone(timezone.utc)
+
+    def process_result_value(
+        self,
+        value: datetime | None,
+        dialect,
+    ) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+
+JSON_DOCUMENT = JSON().with_variant(JSONB(), "postgresql")
+EVENT_ID = BigInteger().with_variant(Integer(), "sqlite")
 
 
 class EventRow(Base):
@@ -40,17 +75,17 @@ class EventRow(Base):
     )
 
     id: Mapped[int] = mapped_column(
-        BigInteger,
+        EVENT_ID,
         Identity(always=True),
         primary_key=True,
     )
     external_id: Mapped[str] = mapped_column(String(255), nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     actor: Mapped[str] = mapped_column(String(255), nullable=False)
     action: Mapped[str] = mapped_column(String(255), nullable=False)
     resource: Mapped[str] = mapped_column(Text, nullable=False)
-    raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    raw_payload: Mapped[dict] = mapped_column(JSON_DOCUMENT, nullable=False)
     event_type: Mapped[str | None] = mapped_column(String(128))
     event_action: Mapped[str | None] = mapped_column(String(128))
     activity_kind: Mapped[str | None] = mapped_column(String(32))
@@ -64,13 +99,13 @@ class EventRow(Base):
     title: Mapped[str | None] = mapped_column(Text)
     content_excerpt: Mapped[str | None] = mapped_column(Text)
     correlation_id: Mapped[str | None] = mapped_column(String(512))
-    attributes: Mapped[dict | None] = mapped_column(JSONB)
+    attributes: Mapped[dict | None] = mapped_column(JSON_DOCUMENT)
 
 
 class EventRepository:
     def __init__(self, engine: Engine) -> None:
-        if engine.dialect.name != "postgresql":
-            raise ValueError("EventRepository requires PostgreSQL.")
+        if engine.dialect.name not in {"postgresql", "sqlite"}:
+            raise ValueError("EventRepository supports PostgreSQL and SQLite.")
         self.engine = engine
 
     def create_schema(self) -> None:
@@ -108,33 +143,47 @@ class EventRepository:
             }
             for event in unique_events
         ]
-        statement = insert(EventRow).values(values)
-        statement = statement.on_conflict_do_update(
-            constraint="uq_events_source_external_id",
-            set_={
-                "timestamp": statement.excluded.timestamp,
-                "actor": statement.excluded.actor,
-                "action": statement.excluded.action,
-                "resource": statement.excluded.resource,
-                "raw_payload": statement.excluded.raw_payload,
-                "event_type": statement.excluded.event_type,
-                "event_action": statement.excluded.event_action,
-                "activity_kind": statement.excluded.activity_kind,
-                "outcome": statement.excluded.outcome,
-                "service": statement.excluded.service,
-                "region": statement.excluded.region,
-                "resource_type": statement.excluded.resource_type,
-                "resource_id": statement.excluded.resource_id,
-                "resource_name": statement.excluded.resource_name,
-                "resource_url": statement.excluded.resource_url,
-                "title": statement.excluded.title,
-                "content_excerpt": statement.excluded.content_excerpt,
-                "correlation_id": statement.excluded.correlation_id,
-                "attributes": statement.excluded.attributes,
-            },
+        dialect = self.engine.dialect.name
+        chunk_size = (
+            max(1, 900 // len(values[0]))
+            if dialect == "sqlite"
+            else len(values)
+        )
+        value_chunks = (
+            values[index : index + chunk_size]
+            for index in range(0, len(values), chunk_size)
         )
         with Session(self.engine) as session:
-            session.execute(statement)
+            for value_chunk in value_chunks:
+                if dialect == "postgresql":
+                    statement = postgresql.insert(EventRow).values(value_chunk)
+                else:
+                    statement = sqlite.insert(EventRow).values(value_chunk)
+                statement = statement.on_conflict_do_update(
+                    index_elements=[EventRow.source, EventRow.external_id],
+                    set_={
+                        "timestamp": statement.excluded.timestamp,
+                        "actor": statement.excluded.actor,
+                        "action": statement.excluded.action,
+                        "resource": statement.excluded.resource,
+                        "raw_payload": statement.excluded.raw_payload,
+                        "event_type": statement.excluded.event_type,
+                        "event_action": statement.excluded.event_action,
+                        "activity_kind": statement.excluded.activity_kind,
+                        "outcome": statement.excluded.outcome,
+                        "service": statement.excluded.service,
+                        "region": statement.excluded.region,
+                        "resource_type": statement.excluded.resource_type,
+                        "resource_id": statement.excluded.resource_id,
+                        "resource_name": statement.excluded.resource_name,
+                        "resource_url": statement.excluded.resource_url,
+                        "title": statement.excluded.title,
+                        "content_excerpt": statement.excluded.content_excerpt,
+                        "correlation_id": statement.excluded.correlation_id,
+                        "attributes": statement.excluded.attributes,
+                    },
+                )
+                session.execute(statement)
             session.commit()
         logger.debug(
             "database.events_upserted",
@@ -197,6 +246,18 @@ class EventRepository:
 
 
 def build_repository(database_url: str) -> EventRepository:
-    repository = EventRepository(create_engine(database_url, pool_pre_ping=True))
+    url: URL = make_url(database_url)
+    if url.get_backend_name() not in {"postgresql", "sqlite"}:
+        raise ValueError("DATABASE_URL must select PostgreSQL or SQLite.")
+    if (
+        url.get_backend_name() == "sqlite"
+        and url.database not in (None, "", ":memory:")
+    ):
+        if not url.database.startswith("file:"):
+            Path(url.database).expanduser().resolve().parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+    repository = EventRepository(create_engine(url, pool_pre_ping=True))
     logger.debug("database.repository_initialized", dialect=repository.engine.dialect.name)
     return repository

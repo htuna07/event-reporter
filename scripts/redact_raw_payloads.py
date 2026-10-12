@@ -3,10 +3,10 @@
 import json
 from pathlib import Path
 
-from sqlalchemy import text
+from sqlalchemy import update
 
 from activity_reporter.config import DatabaseSettings, environment
-from activity_reporter.database import build_repository
+from activity_reporter.database import EventRow, build_repository
 from activity_reporter.redaction import redact_payload
 
 
@@ -27,13 +27,18 @@ def redact_database() -> int:
     repository = build_repository(DatabaseSettings.from_environment(environment()).url)
     changed = 0
     with repository.engine.begin() as connection:
-        rows = connection.execute(text("SELECT id, raw_payload FROM events")).mappings()
+        rows = connection.execute(
+            EventRow.__table__.select().with_only_columns(
+                EventRow.id, EventRow.raw_payload
+            )
+        ).mappings()
         for row in rows:
             redacted = redact_payload(row["raw_payload"])
             if redacted != row["raw_payload"]:
                 connection.execute(
-                    text("UPDATE events SET raw_payload = CAST(:raw_payload AS jsonb) WHERE id = :id"),
-                    {"id": row["id"], "raw_payload": json.dumps(redacted)},
+                    update(EventRow)
+                    .where(EventRow.id == row["id"])
+                    .values(raw_payload=redacted)
                 )
                 changed += 1
     return changed

@@ -29,7 +29,13 @@ def upgrade() -> None:
         sa.Column("resource_url", sa.Text(), nullable=True),
         sa.Column("title", sa.Text(), nullable=True),
         sa.Column("correlation_id", sa.String(length=512), nullable=True),
-        sa.Column("attributes", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column(
+            "attributes",
+            sa.JSON().with_variant(
+                postgresql.JSONB(astext_type=sa.Text()), "postgresql"
+            ),
+            nullable=True,
+        ),
     )
     for column in columns:
         op.add_column("events", column)
