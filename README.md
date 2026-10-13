@@ -218,8 +218,9 @@ periods of high load.
 Configure these repository variables:
 
 - `REPORT_ACTORS`: comma-separated GitHub and/or AWS actor names to include.
-- `GITHUB_REPOSITORIES`: comma-separated `owner/repository` list when using
-  GitHub as a source. Configure either this or CloudTrail as a data source.
+- `ACTIVITY_GITHUB_REPOSITORIES`: comma-separated `owner/repository` list
+  when using GitHub as a source. The workflow passes it to the application as
+  `GITHUB_REPOSITORIES`. Configure either this or CloudTrail as a data source.
 - `REPORT_PROVIDER`: optional, `openai` (default) or `anthropic`.
 - `OPENAI_MODEL`: optional; defaults to `gpt-6-luna` when using OpenAI.
 - `ANTHROPIC_MODEL`: required when `REPORT_PROVIDER=anthropic`.

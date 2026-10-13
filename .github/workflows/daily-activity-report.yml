@@ -27,7 +27,7 @@ jobs:
       ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-6-luna' }}
-      GITHUB_REPOSITORIES: ${{ vars.GITHUB_REPOSITORIES }}
+      GITHUB_REPOSITORIES: ${{ vars.ACTIVITY_GITHUB_REPOSITORIES }}
       GITHUB_TOKEN: ${{ secrets.ACTIVITY_GITHUB_TOKEN || github.token }}
       AWS_REGIONS: ${{ vars.AWS_REGIONS }}
       AWS_ACTORS: ${{ vars.AWS_ACTORS }}
