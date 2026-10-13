@@ -1,0 +1,152 @@
+name: Daily Activity Report
+
+on:
+  schedule:
+    - cron: "45 17 * * *"
+      timezone: "Europe/Istanbul"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: daily-activity-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: sqlite:///output/activity-reporter.db
+      REPORT_OUTPUT_PATH: output/reports/activity-report.md
+      REPORT_ACTORS: ${{ vars.REPORT_ACTORS }}
+      REPORT_PROVIDER: ${{ vars.REPORT_PROVIDER || 'openai' }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-6-luna' }}
+      GITHUB_REPOSITORIES: ${{ vars.GITHUB_REPOSITORIES }}
+      GITHUB_TOKEN: ${{ secrets.ACTIVITY_GITHUB_TOKEN || github.token }}
+      AWS_REGIONS: ${{ vars.AWS_REGIONS }}
+      AWS_ACTORS: ${{ vars.AWS_ACTORS }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID }}
+      TELEGRAM_CONFIGURED: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && vars.TELEGRAM_CHAT_ID != '' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Set daily UTC window
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          from datetime import datetime, timedelta, timezone
+
+          end = datetime.now(timezone.utc).replace(microsecond=0)
+          start = end - timedelta(days=1)
+          print(f"INGEST_START_TIME={start.isoformat().replace('+00:00', 'Z')}")
+          print(f"INGEST_END_TIME={end.isoformat().replace('+00:00', 'Z')}")
+          print(f"REPORT_START_TIME={start.isoformat().replace('+00:00', 'Z')}")
+          print(f"REPORT_END_TIME={end.isoformat().replace('+00:00', 'Z')}")
+          PY
+
+      - name: Configure AWS credentials
+        if: ${{ vars.AWS_ROLE_ARN != '' && vars.AWS_REGIONS != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_DEFAULT_REGION }}
+
+      - name: Ingest events
+        run: python -m activity_reporter ingest
+
+      - name: Generate report
+        run: python -m activity_reporter report > /dev/null
+
+      - name: Send report to Telegram
+        env:
+          REPORT_FILE: output/reports/activity-report.md
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import requests
+
+          url = (
+              "https://api.telegram.org/bot"
+              f"{os.environ['TELEGRAM_BOT_TOKEN']}/sendDocument"
+          )
+          try:
+              with Path(os.environ["REPORT_FILE"]).open("rb") as report_file:
+                  response = requests.post(
+                      url,
+                      data={
+                          "chat_id": os.environ["TELEGRAM_CHAT_ID"],
+                          "caption": "Daily activity report",
+                      },
+                      files={
+                          "document": (
+                              "activity-report.md",
+                              report_file,
+                              "text/markdown",
+                          )
+                      },
+                      timeout=60,
+                  )
+              response.raise_for_status()
+              result = response.json()
+          except (requests.RequestException, ValueError):
+              raise SystemExit("Telegram report delivery failed.") from None
+          if result.get("ok") is not True:
+              raise SystemExit("Telegram rejected the report document.")
+          print("Report sent to Telegram.")
+          PY
+
+      - name: Notify Telegram about workflow failure
+        if: ${{ failure() && env.TELEGRAM_CONFIGURED == 'true' }}
+        run: |
+          python - <<'PY'
+          import os
+
+          import requests
+
+          run_url = (
+              f"{os.environ['GITHUB_SERVER_URL']}/"
+              f"{os.environ['GITHUB_REPOSITORY']}/actions/runs/"
+              f"{os.environ['GITHUB_RUN_ID']}"
+          )
+          url = (
+              "https://api.telegram.org/bot"
+              f"{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
+          )
+          try:
+              response = requests.post(
+                  url,
+                  json={
+                      "chat_id": os.environ["TELEGRAM_CHAT_ID"],
+                      "text": f"Daily Activity Report failed: {run_url}",
+                  },
+                  timeout=30,
+              )
+              response.raise_for_status()
+              result = response.json()
+          except (requests.RequestException, ValueError):
+              raise SystemExit(
+                  "Telegram failure notification could not be sent."
+              ) from None
+          if result.get("ok") is not True:
+              raise SystemExit("Telegram rejected the failure notification.")
+          PY

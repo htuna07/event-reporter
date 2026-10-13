@@ -206,6 +206,40 @@ PostgreSQL and SQLite:
 python -m alembic upgrade head
 ```
 
+## GitHub Actions and Telegram
+
+`.github/workflows/daily-activity-report.yml` runs daily at 17:45 in
+`Europe/Istanbul` time and can also be started with `workflow_dispatch`. It
+ingests and reports the preceding 24 hours using a temporary SQLite database,
+then sends the Markdown report as a document to Telegram. The window is based
+on the actual workflow start time. GitHub may delay scheduled runs during
+periods of high load.
+
+Configure these repository variables:
+
+- `REPORT_ACTORS`: comma-separated GitHub and/or AWS actor names to include.
+- `GITHUB_REPOSITORIES`: comma-separated `owner/repository` list when using
+  GitHub as a source. Configure either this or CloudTrail as a data source.
+- `REPORT_PROVIDER`: optional, `openai` (default) or `anthropic`.
+- `OPENAI_MODEL`: optional; defaults to `gpt-6-luna` when using OpenAI.
+- `ANTHROPIC_MODEL`: required when `REPORT_PROVIDER=anthropic`.
+- `AWS_REGIONS`, `AWS_ACTORS`, `AWS_ROLE_ARN`, and `AWS_DEFAULT_REGION`:
+  configure optional CloudTrail ingestion. Leave these unset to skip AWS.
+  When enabling it, the AWS role must trust this repository's GitHub Actions
+  OIDC identity.
+
+Configure these repository secrets:
+
+- `TELEGRAM_BOT_TOKEN`: token for the Telegram bot that sends the report.
+- `OPENAI_API_KEY`: required for the default OpenAI provider.
+- `ANTHROPIC_API_KEY`: required when using Anthropic instead.
+- `ACTIVITY_GITHUB_TOKEN`: optional token for GitHub repositories the built-in
+  workflow token cannot read.
+
+Change the cron expression and `timezone` in the workflow file to change the
+scheduled local time or timezone. Set `TELEGRAM_CHAT_ID` as a repository
+variable. For a private chat, start the bot in Telegram before its first run.
+
 To redact already-retained payloads and the saved source snapshot without
 printing their contents, run:
 
