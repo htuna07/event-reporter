@@ -211,9 +211,9 @@ python -m alembic upgrade head
 `.github/workflows/daily-activity-report.yml` runs daily at 17:45 in
 `Europe/Istanbul` time and can also be started with `workflow_dispatch`. It
 ingests and reports the preceding 24 hours using a temporary SQLite database,
-then sends the Markdown report as a document to Telegram. The window is based
-on the actual workflow start time. GitHub may delay scheduled runs during
-periods of high load.
+then sends the report text directly to Telegram, splitting long reports across
+multiple messages. The window is based on the actual workflow start time.
+GitHub may delay scheduled runs during periods of high load.
 
 Configure these repository variables:
 
