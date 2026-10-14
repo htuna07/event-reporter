@@ -210,8 +210,14 @@ python -m alembic upgrade head
 
 ## GitHub Actions and Telegram
 
-`.github/workflows/daily-activity-report.yml` runs daily at 17:45 in
-`Europe/Istanbul` time and can also be started with `workflow_dispatch`. It
+`.github/workflows/daily-activity-report.yml` is currently disabled in code:
+the `report` job has `if: ${{ false }}` while reports run locally with Docker.
+Scheduled and manually dispatched runs skip that job. To re-enable GitHub
+reports, remove the condition and push the change; no manual workflow enablement
+is required in GitHub.
+
+The workflow retains its daily schedule at 17:45 in `Europe/Istanbul` time
+and its `workflow_dispatch` trigger. When enabled, it
 ingests and reports the preceding 24 hours using a temporary SQLite database,
 then pipes the plain-text report directly to Telegram, splitting long reports
 across multiple messages. It also saves the report to
