@@ -55,6 +55,12 @@ class FakeSource:
         yield {"id": "3"}
 
 
+class InterruptedSource(FakeSource):
+    def fetch(self, start: datetime, end: datetime):
+        yield {"id": "1"}
+        raise RuntimeError("source unavailable")
+
+
 class FakeRepository:
     def __init__(self) -> None:
         self.batches: list[list[NormalizedEvent]] = []
@@ -98,6 +104,17 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(
             [[item.external_id for item in batch] for batch in repository.batches],
             [["1", "2"], ["3"]],
+        )
+
+    def test_ingestion_flushes_fetched_events_before_source_failure(self) -> None:
+        repository = FakeRepository()
+
+        with self.assertRaisesRegex(RuntimeError, "source unavailable"):
+            IngestionService(repository).ingest(InterruptedSource(), START, END)
+
+        self.assertEqual(
+            [[item.external_id for item in batch] for batch in repository.batches],
+            [["1"]],
         )
 
     def test_reporting_passes_exact_actor_list_and_range(self) -> None:

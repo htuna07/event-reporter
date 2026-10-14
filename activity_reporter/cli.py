@@ -86,6 +86,7 @@ def main() -> int:
         )
         service = IngestionService(repository)
         result: dict[str, int] = {}
+        failed_sources: list[str] = []
         for source in sources:
             logger.log("ingestion.source_started", source=source.name)
             try:
@@ -100,14 +101,28 @@ def main() -> int:
                     source=source.name,
                     error_type=type(error).__name__,
                 )
-                return 1
+                failed_sources.append(source.name)
+                continue
+            source_failures = getattr(source, "failures", ())
+            if source_failures:
+                failed_sources.append(source.name)
+                logger.error(
+                    "ingestion.source_partial_failure",
+                    source=source.name,
+                    failure_count=len(source_failures),
+                    failures=list(source_failures),
+                )
             logger.log(
                 "ingestion.source_completed",
                 source=source.name,
                 processed_events=result[source.name],
             )
-        logger.log("ingestion.completed", sources=result)
-        return 0
+        logger.log(
+            "ingestion.completed",
+            sources=result,
+            failed_sources=failed_sources,
+        )
+        return 1 if failed_sources else 0
 
     try:
         settings = ReportSettings.from_environment(values)

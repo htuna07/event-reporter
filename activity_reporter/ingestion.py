@@ -16,7 +16,32 @@ class IngestionService:
     def ingest(self, source: EventSource, start: datetime, end: datetime) -> int:
         count = 0
         batch: list[NormalizedEvent] = []
-        for payload in source.fetch(start, end):
+        iterator = iter(source.fetch(start, end))
+
+        def write_batch() -> None:
+            nonlocal count
+            if not batch:
+                return
+            batch_size = len(batch)
+            written = self.repository.upsert(batch)
+            count += written
+            logger.debug(
+                "ingestion.batch_written",
+                source=source.name,
+                batch_size=batch_size,
+                written=written,
+                cumulative_count=count,
+            )
+            batch.clear()
+
+        while True:
+            try:
+                payload = next(iterator)
+            except StopIteration:
+                break
+            except Exception:
+                write_batch()
+                raise
             try:
                 batch.append(source.adapter.adapt(payload))
             except Exception as error:
@@ -25,26 +50,9 @@ class IngestionService:
                     source=source.name,
                     error_type=type(error).__name__,
                 )
+                write_batch()
                 raise
             if len(batch) == self.batch_size:
-                written = self.repository.upsert(batch)
-                count += written
-                logger.debug(
-                    "ingestion.batch_written",
-                    source=source.name,
-                    batch_size=len(batch),
-                    written=written,
-                    cumulative_count=count,
-                )
-                batch.clear()
-        written = self.repository.upsert(batch)
-        count += written
-        if batch:
-            logger.debug(
-                "ingestion.batch_written",
-                source=source.name,
-                batch_size=len(batch),
-                written=written,
-                cumulative_count=count,
-            )
+                write_batch()
+        write_batch()
         return count

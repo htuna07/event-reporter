@@ -29,6 +29,7 @@ class GitHubSource(EventSource):
         session: requests.Session | None = None,
     ) -> None:
         self.repositories = repositories
+        self.failures: list[str] = []
         self.adapter = GitHubAdapter()
         self.session = session or requests.Session()
         self.session.headers.update(
@@ -54,12 +55,22 @@ class GitHubSource(EventSource):
         return cls(repositories=repositories, token=environment.get("GITHUB_TOKEN"))
 
     def fetch(self, start: datetime, end: datetime) -> Iterable[dict[str, Any]]:
+        self.failures.clear()
         for repository in self.repositories:
+            repository_name = f"{repository.owner}/{repository.name}"
             logger.debug(
                 "github.repository_fetch_started",
-                repository=f"{repository.owner}/{repository.name}",
+                repository=repository_name,
             )
-            yield from self._fetch_repository(repository, start, end)
+            try:
+                yield from self._fetch_repository(repository, start, end)
+            except Exception as error:
+                self.failures.append(repository_name)
+                logger.error(
+                    "github.repository_fetch_failed",
+                    repository=repository_name,
+                    error_type=type(error).__name__,
+                )
 
     def _fetch_repository(
         self,

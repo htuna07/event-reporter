@@ -1,6 +1,8 @@
 import unittest
 from datetime import datetime, timezone
 
+import requests
+
 from activity_reporter.sources.cloudtrail import CloudTrailSource
 from activity_reporter.sources.github import GitHubSource, Repository
 
@@ -27,7 +29,10 @@ class FakeRequestsSession:
 
     def get(self, url, params, timeout):
         self.calls += 1
-        return FakeResponse(next(self.pages))
+        result = next(self.pages)
+        if isinstance(result, Exception):
+            raise result
+        return FakeResponse(result)
 
 
 class FakePaginator:
@@ -62,6 +67,13 @@ class FakeBotoSession:
         return FakeCloudTrailClient(self.paginator)
 
 
+class RegionFailingBotoSession(FakeBotoSession):
+    def client(self, name: str, region_name: str) -> FakeCloudTrailClient:
+        if region_name == "broken-region":
+            raise RuntimeError("unavailable")
+        return super().client(name, region_name)
+
+
 def github_event(identifier: str, timestamp: str) -> dict:
     return {"id": identifier, "created_at": timestamp}
 
@@ -90,6 +102,28 @@ class SourceTest(unittest.TestCase):
         self.assertEqual([item["id"] for item in events], ["middle", "start"])
         self.assertEqual(session.calls, 2)
 
+    def test_github_continues_after_a_repository_request_fails(self) -> None:
+        session = FakeRequestsSession(
+            [
+                requests.HTTPError("forbidden"),
+                [github_event("available", "2026-09-25T12:00:00Z")],
+                [],
+            ]
+        )
+        source = GitHubSource(
+            (
+                Repository("private", "project"),
+                Repository("example", "project"),
+            ),
+            session=session,
+        )
+
+        events = list(source.fetch(START, END))
+
+        self.assertEqual([event["id"] for event in events], ["available"])
+        self.assertEqual(session.calls, 3)
+        self.assertEqual(source.failures, ["private/project"])
+
     def test_cloudtrail_uses_the_sdk_paginator(self) -> None:
         paginator = FakePaginator()
         session = FakeBotoSession(paginator)
@@ -116,6 +150,19 @@ class SourceTest(unittest.TestCase):
                 ],
             },
         )
+
+    def test_cloudtrail_continues_after_a_region_request_fails(self) -> None:
+        paginator = FakePaginator()
+        source = CloudTrailSource(
+            ("broken-region", "eu-central-1"),
+            ("Tuna",),
+            session=RegionFailingBotoSession(paginator),
+        )
+
+        events = list(source.fetch(START, END))
+
+        self.assertEqual([event["EventId"] for event in events], ["1"])
+        self.assertEqual(source.failures, ["broken-region/Tuna"])
 
     def test_cloudtrail_accepts_legacy_actor_setting(self) -> None:
         source = CloudTrailSource.from_environment(

@@ -23,6 +23,7 @@ class CloudTrailSource(EventSource):
     ) -> None:
         self.regions = regions
         self.actors = actors
+        self.failures: list[str] = []
         self.session = session or boto3.Session()
         self.adapter = CloudTrailAdapter()
 
@@ -49,31 +50,41 @@ class CloudTrailSource(EventSource):
         return cls(regions=regions, actors=actors)
 
     def fetch(self, start: datetime, end: datetime) -> Iterable[dict[str, Any]]:
+        self.failures.clear()
         for region in self.regions:
             logger.debug("cloudtrail.region_fetch_started", region=region)
-            client = self.session.client("cloudtrail", region_name=region)
-            paginator = client.get_paginator("lookup_events")
             for actor in self.actors:
                 logger.debug("cloudtrail.actor_lookup_started", region=region)
-                for page in paginator.paginate(
-                    StartTime=start,
-                    EndTime=end,
-                    LookupAttributes=[
-                        {
-                            "AttributeKey": "Username",
-                            "AttributeValue": actor,
-                        }
-                    ],
-                ):
-                    events = page.get("Events", [])
-                    logger.debug(
-                        "cloudtrail.page_fetched",
+                try:
+                    client = self.session.client("cloudtrail", region_name=region)
+                    paginator = client.get_paginator("lookup_events")
+                    for page in paginator.paginate(
+                        StartTime=start,
+                        EndTime=end,
+                        LookupAttributes=[
+                            {
+                                "AttributeKey": "Username",
+                                "AttributeValue": actor,
+                            }
+                        ],
+                    ):
+                        events = page.get("Events", [])
+                        logger.debug(
+                            "cloudtrail.page_fetched",
+                            region=region,
+                            event_count=len(events),
+                        )
+                        for event in events:
+                            event_time = event.get("EventTime")
+                            if not isinstance(event_time, datetime):
+                                raise TypeError("CloudTrail event has no valid EventTime.")
+                            if start <= event_time < end:
+                                yield event
+                except Exception as error:
+                    lookup = f"{region}/{actor}"
+                    self.failures.append(lookup)
+                    logger.error(
+                        "cloudtrail.lookup_failed",
                         region=region,
-                        event_count=len(events),
+                        error_type=type(error).__name__,
                     )
-                    for event in events:
-                        event_time = event.get("EventTime")
-                        if not isinstance(event_time, datetime):
-                            raise TypeError("CloudTrail event has no valid EventTime.")
-                        if start <= event_time < end:
-                            yield event
