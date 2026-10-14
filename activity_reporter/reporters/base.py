@@ -16,6 +16,8 @@ Use only the supplied events.
 Group related work instead of describing every event separately.
 Give priority to write, create, update, and collaboration events;
 treat read-only events as operational activities.
+Use human-readable names to describe the work instead of technical identifiers.
+Skip failed events on the report.
 Return plain text with a title, an Actions bullet list, and a short Summary.
 Do not use Markdown or HTML formatting. Use simple section labels and the •
 character for bullets.
