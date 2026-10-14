@@ -1,0 +1,5 @@
+SHELL=/bin/sh
+PATH=/usr/local/bin:/usr/bin:/bin
+MAILTO=""
+
+45 17 * * * root cd /app && /usr/local/bin/python -m scripts.run_daily_workflow --environment /run/activity-reporter/environment.json > /proc/1/fd/1 2> /proc/1/fd/2

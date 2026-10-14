@@ -255,6 +255,87 @@ python -m scripts.redact_raw_payloads
 `create_all` does not alter an existing `events` table, so migrations remain
 required for existing installations.
 
+## Daily local workflow with Docker
+
+The Docker Compose scheduler runs the same ingestion, report generation, and
+Telegram delivery commands every day at **17:45 Europe/Istanbul**. Dependencies
+are installed when the image is built. Application code and the GitHub Actions
+workflow are unchanged.
+
+Configure the project's existing `.env` with:
+
+- `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+- `REPORT_ACTORS` and at least one source: `GITHUB_REPOSITORIES`, or
+  `AWS_REGIONS` together with `AWS_ACTORS`.
+- `OPENAI_API_KEY` for the default OpenAI provider. `OPENAI_MODEL` defaults to
+  `gpt-6-luna`. Alternatively set `REPORT_PROVIDER=anthropic`,
+  `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL`.
+- Optional application limits such as `REPORT_MAX_EVENTS` and
+  `REPORT_MAX_INPUT_CHARACTERS`.
+
+Use application setting names locally, such as `GITHUB_REPOSITORIES` and
+`GITHUB_TOKEN`, rather than GitHub Actions' `ACTIVITY_GITHUB_*` names. Public
+repositories can work without a token; private repositories need a suitable
+local token. GitHub Actions' automatic workflow token and AWS OIDC role identity
+are not available in this container. If using CloudTrail, supply valid local
+AWS credentials through the supported `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY`, and optional `AWS_SESSION_TOKEN` settings. Expiring AWS
+credentials must be refreshed and the container recreated.
+
+Start the scheduler:
+
+```bash
+docker compose up -d --build
+```
+
+On macOS, enable **Start Docker Desktop when you sign in to your computer** in
+Docker Desktop's settings. Compose's `restart: unless-stopped` policy restarts
+the existing scheduler when Docker starts, unless you explicitly stopped it.
+This provides startup after login; it does not run Docker before login. See
+[Docker Desktop settings](https://docs.docker.com/desktop/settings-and-maintenance/settings/)
+and [Docker restart policies](https://docs.docker.com/engine/containers/start-containers-automatically/).
+
+The computer must be awake and Docker running at 17:45. Missed runs are skipped;
+starting the container does not immediately generate a report. To run manually:
+
+```bash
+docker compose exec scheduler python -m scripts.run_daily_workflow
+```
+
+Every invocation computes fresh UTC ingestion and report timestamps for the
+preceding 24 hours ending at the actual invocation time. It overrides configured
+`INGEST_*_TIME`, `REPORT_*_TIME`, `DATABASE_URL`, and `REPORT_OUTPUT_PATH` values
+for that invocation. A fresh temporary SQLite database is deleted after each
+run, including failed runs. No PostgreSQL container or migration is needed.
+
+Ingestion must succeed before report generation, and generation must succeed
+before the existing Telegram sender reads the report. Reports are split into
+messages by that sender. Failures and the 30-minute workflow timeout trigger a
+best-effort Telegram notification naming the failed stage and run time. A
+notification request can take up to 30 additional seconds. Overlapping manual
+and scheduled invocations are skipped while another invocation holds the lock.
+
+Reports and logs persist in the `activity-reporter-output` Compose volume:
+
+- `/app/output/reports/activity-report.txt`: latest generated report.
+- `/app/output/logs/activity-reporter.txt`: application logs, appended each run.
+- `/app/output/logs/daily-workflow.log`: workflow status and date windows.
+
+Application logs accumulate; remove or archive them periodically if needed.
+Docker console logs are rotated automatically. Inspect status and copy output:
+
+```bash
+docker compose logs --tail=100 scheduler
+docker compose cp scheduler:/app/output ./output
+```
+
+Configuration is injected at container creation, excluded from the image, and
+preserved in a restricted runtime file so cron receives it. After changing
+`.env`, recreate the scheduler with `docker compose up -d --force-recreate`.
+After code or dependency changes, rebuild with `docker compose up -d --build`.
+Stop scheduling with `docker compose stop`; resume with `docker compose up -d`.
+The output volume remains when the container is stopped or removed.
+
 ## Adding a source
 
 Add an adapter under `activity_reporter/adapters/` and an `EventSource` subclass under `activity_reporter/sources/`. Implement `from_environment`, `fetch`, and `adapt`, and give the source a unique name. Source modules are discovered automatically, so shared ingestion, database, query, reporting, and CLI code need no changes.
