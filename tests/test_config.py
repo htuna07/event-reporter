@@ -33,7 +33,7 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.max_input_characters, 200_000)
         self.assertEqual(
             settings.output_path,
-            Path("output/reports/activity-report.md"),
+            Path("output/reports/activity-report.txt"),
         )
 
     def test_report_limits_must_be_positive_integers(self) -> None:

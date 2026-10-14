@@ -129,16 +129,17 @@ def main() -> int:
         logger.error("report.generation_failed", error_type=type(error).__name__)
         return 1
 
-    try:
-        settings.output_path.parent.mkdir(parents=True, exist_ok=True)
-        settings.output_path.write_text(report, encoding="utf-8")
-    except OSError as error:
-        logger.error("report.output_write_failed", error_type=type(error).__name__)
-        return 1
+    if settings.output_path is not None:
+        try:
+            settings.output_path.parent.mkdir(parents=True, exist_ok=True)
+            settings.output_path.write_text(report, encoding="utf-8")
+        except OSError as error:
+            logger.error("report.output_write_failed", error_type=type(error).__name__)
+            return 1
     print(report)
     logger.log(
         "report.completed",
-        output_path=str(settings.output_path),
+        output_path=(str(settings.output_path) if settings.output_path else None),
         output_characters=len(report),
     )
     return 0

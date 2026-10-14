@@ -1,6 +1,6 @@
 # Example Activity Report
 
-The following anonymized example shows the Markdown output produced by Activity Reporter.
+The following anonymized example is shown with Markdown for readability. Generated reports use plain text.
 
 ## Activity Report — September 29, 2026 (Example User / example-user)
 
@@ -165,12 +165,12 @@ OPENAI_MODEL=your_openai_model
 REPORT_MAX_EVENTS=1000
 REPORT_MAX_INPUT_CHARACTERS=200000
 REPORT_MAX_TOKENS=1500
-REPORT_OUTPUT_PATH=output/reports/activity-report.md
+REPORT_OUTPUT_PATH=output/reports/activity-report.txt
 ```
 
 `GITHUB_TOKEN` is optional for public repositories. `AWS_*` credentials use boto3's standard credential chain, so explicit keys are optional. A source is enabled when `GITHUB_REPOSITORIES` or `AWS_REGIONS` is set. CloudTrail ingestion requires `AWS_ACTORS` and applies an exact AWS `Username` filter before storing events. The legacy singular `AWS_ACTOR_USERNAME` setting is also accepted.
 
-Reports are written to `output/reports/activity-report.md` by default. Set `REPORT_OUTPUT_PATH` to use another location. The report is also printed to stdout.
+Reports are written to `output/reports/activity-report.txt` by default and are also printed to stdout. Set `REPORT_OUTPUT_PATH` to another location, or set it to an empty value to skip saving the file and print only to stdout.
 
 Report generation defaults to Anthropic. Set `REPORT_PROVIDER=openai` to use OpenAI instead; only the selected provider's API key and model are required. Both providers use the same input limits and report format. Report generation rejects inputs above `REPORT_MAX_EVENTS` or `REPORT_MAX_INPUT_CHARACTERS` before making a provider request. Narrow the report range or deliberately raise these limits when a query exceeds them.
 
@@ -186,7 +186,9 @@ python -m activity_reporter report
 
 Operational logs go to stdout as human-readable text by default. Use `--debug`
 to include diagnostic messages, `--log-format json` for JSON Lines, and
-`--log-output PATH` to append logs to a file instead:
+`--log-output PATH` to append logs to a file instead. The Telegram workflow
+stores report-generation logs in `output/logs/activity-reporter.txt` so only the
+report text goes through the Telegram pipe:
 
 ```bash
 python -m activity_reporter ingest --debug --log-format json \
@@ -211,8 +213,10 @@ python -m alembic upgrade head
 `.github/workflows/daily-activity-report.yml` runs daily at 17:45 in
 `Europe/Istanbul` time and can also be started with `workflow_dispatch`. It
 ingests and reports the preceding 24 hours using a temporary SQLite database,
-then sends the report text directly to Telegram, splitting long reports across
-multiple messages. The window is based on the actual workflow start time.
+then pipes the plain-text report directly to Telegram, splitting long reports
+across multiple messages. It also saves the report to
+`output/reports/activity-report.txt`. The window is based on the actual workflow
+start time.
 GitHub may delay scheduled runs during periods of high load.
 
 Configure these repository variables:

@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 30
     env:
       DATABASE_URL: sqlite:///output/activity-reporter.db
-      REPORT_OUTPUT_PATH: output/reports/activity-report.md
+      REPORT_OUTPUT_PATH: output/reports/activity-report.txt
       REPORT_ACTORS: ${{ vars.REPORT_ACTORS }}
       REPORT_PROVIDER: ${{ vars.REPORT_PROVIDER || 'openai' }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -72,58 +72,8 @@ jobs:
       - name: Ingest events
         run: python -m activity_reporter ingest
 
-      - name: Generate report
-        run: python -m activity_reporter report > /dev/null
-
-      - name: Send report to Telegram
-        env:
-          REPORT_FILE: output/reports/activity-report.md
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-
-          import requests
-
-          url = (
-              "https://api.telegram.org/bot"
-              f"{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
-          )
-          report = Path(os.environ["REPORT_FILE"]).read_text(encoding="utf-8").strip()
-          if not report:
-              raise SystemExit("Generated report is empty.")
-
-          chunks = []
-          while len(report) > 3500:
-              split_at = report.rfind("\n", 0, 3500)
-              if split_at <= 0:
-                  split_at = 3500
-              chunks.append(report[:split_at].strip())
-              report = report[split_at:].strip()
-          if report:
-              chunks.append(report)
-
-          try:
-              for index, chunk in enumerate(chunks, start=1):
-                  heading = "Daily activity report"
-                  if len(chunks) > 1:
-                      heading += f" ({index}/{len(chunks)})"
-                  response = requests.post(
-                      url,
-                      json={
-                          "chat_id": os.environ["TELEGRAM_CHAT_ID"],
-                          "text": f"{heading}\n\n{chunk}",
-                      },
-                      timeout=30,
-                  )
-                  response.raise_for_status()
-                  result = response.json()
-                  if result.get("ok") is not True:
-                      raise SystemExit("Telegram rejected the report message.")
-          except (requests.RequestException, ValueError):
-              raise SystemExit("Telegram report delivery failed.") from None
-          print(f"Report sent to Telegram in {len(chunks)} message(s).")
-          PY
+      - name: Generate and send report to Telegram
+        run: python -m activity_reporter report --log-output output/logs/activity-reporter.txt | python -m scripts.send_telegram_report
 
       - name: Notify Telegram about workflow failure
         if: ${{ failure() && env.TELEGRAM_CONFIGURED == 'true' }}

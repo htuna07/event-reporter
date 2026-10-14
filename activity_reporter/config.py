@@ -84,14 +84,15 @@ class ReportSettings:
     max_events: int
     max_input_characters: int
     max_tokens: int
-    output_path: Path
+    output_path: Path | None
 
     @classmethod
     def from_environment(cls, environment: Mapping[str, str]) -> "ReportSettings":
         actors = comma_separated(require(environment, "REPORT_ACTORS"))
         if not actors:
             raise ValueError("REPORT_ACTORS must contain at least one actor.")
-        provider = environment.get("REPORT_PROVIDER", "anthropic").strip().lower()
+        provider = environment.get(
+            "REPORT_PROVIDER", "anthropic").strip().lower()
         provider_settings = {
             "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"),
             "openai": ("OPENAI_API_KEY", "OPENAI_MODEL"),
@@ -101,10 +102,13 @@ class ReportSettings:
                 "REPORT_PROVIDER must be one of: anthropic, openai."
             )
         api_key_name, model_name = provider_settings[provider]
-        output = environment.get(
-            "REPORT_OUTPUT_PATH",
-            "output/reports/activity-report.md",
-        )
+        output = environment.get("REPORT_OUTPUT_PATH")
+        if output is None:
+            output_path = Path("output/reports/activity-report.txt")
+        elif output.strip():
+            output_path = Path(output)
+        else:
+            output_path = None
         settings = cls(
             actors=actors,
             start=parse_datetime(
@@ -131,7 +135,7 @@ class ReportSettings:
                 "REPORT_MAX_TOKENS",
                 1500,
             ),
-            output_path=Path(output),
+            output_path=output_path,
         )
         if settings.start >= settings.end:
             raise ValueError(
