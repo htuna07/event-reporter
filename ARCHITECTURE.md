@@ -24,9 +24,10 @@ Environment variables
                  Telegram (scripts/)
 ```
 
-In production the daily local workflow (`scripts/run_daily_workflow.py`, run by
-cron inside Docker) chains `ingest`, `report`, and Telegram delivery against a
-temporary SQLite database.
+In production the local workflow (`scripts/run_daily_workflow.py`, run by cron
+inside Docker) has two modes against a persistent SQLite database: an hourly
+`ingest` of the last 2 hours, and a 17:45 `report` that ingests the current
+calendar day, reports 00:00 to now, and delivers the report to Telegram.
 
 ## Entry points
 
@@ -280,7 +281,7 @@ Read configuration
 
 ## Scripts
 
-- `scripts/run_daily_workflow.py`: Runs ingestion, report generation, and Telegram delivery for the preceding 24 hours using a temporary SQLite database. Holds a lock against overlapping runs, enforces a 30-minute timeout, and sends a best-effort Telegram failure notification naming the failed stage.
+- `scripts/run_daily_workflow.py`: `--mode ingest` stores the last 2 hours (overlapping windows, idempotent upserts) and notifies Telegram only after three consecutive failures. `--mode report` ingests the Europe/Istanbul calendar day so far, generates the report, and delivers it to Telegram. Both use the SQLite database on the output volume, do not lock against each other, enforce a 30-minute timeout, and report failures notify Telegram with the failed stage.
 - `scripts/container_entrypoint.py`: Writes the container environment to a restricted runtime file and starts cron.
 - `scripts/send_telegram_report.py`: Reads a plain-text report from stdin and sends it to Telegram, splitting long reports across messages.
 - `scripts/redact_raw_payloads.py`: Redacts already-retained payloads.
@@ -288,7 +289,7 @@ Read configuration
 
 ## Deployment
 
-- `Dockerfile`, `compose.yaml`, and `docker/daily-activity-report`: A Compose scheduler with cron firing at 17:45 Europe/Istanbul. Reports and logs persist in the `activity-reporter-output` volume.
+- `Dockerfile`, `compose.yaml`, and `docker/daily-activity-report`: A Compose scheduler with cron firing hourly (ingestion) and at 17:45 Europe/Istanbul (report). Reports and logs persist in the `activity-reporter-output` volume.
 - `.github/workflows/daily-activity-report.yml`: Equivalent GitHub Actions workflow, currently disabled with `if: ${{ false }}`.
 - `migrations/` and `alembic.ini`: Alembic migrations for existing PostgreSQL or SQLite databases.
 
@@ -303,7 +304,7 @@ Read configuration
 - `tests/test_database_schema.py`: Verifies the generated identity and unique constraint.
 - `tests/test_redaction.py`: Verifies payload redaction.
 - `tests/test_logging.py`: Verifies log formats and secret-free output.
-- `tests/test_daily_workflow.py`: Verifies the daily workflow stages, windows, locking, and failure notification.
+- `tests/test_daily_workflow.py`: Verifies the daily workflow stages, windows, ingestion failure streaks, and failure notification.
 
 Run them with `python -m pytest` (install `pytest` in addition to `requirements.txt`).
 

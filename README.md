@@ -271,10 +271,20 @@ required for existing installations.
 
 ## Daily local workflow with Docker
 
-The Docker Compose scheduler runs the same ingestion, report generation, and
-Telegram delivery commands every day at **17:45 Europe/Istanbul**. Dependencies
-are installed when the image is built. Application code and the GitHub Actions
-workflow are unchanged.
+The Docker Compose scheduler runs two cron jobs, both in **Europe/Istanbul** time:
+
+- **Hourly ingestion** (every hour on the hour) re-reads the last 2 hours from
+  every configured source and upserts them into a persistent SQLite database.
+  The windows deliberately overlap: ingestion is idempotent, and the overlap
+  absorbs source delays and missed runs.
+- **Daily report** (**17:45**) first ingests the current calendar day, then
+  reports every event from **00:00 local time until 17:45** for the configured
+  actors and sends the report to Telegram.
+
+Events between 17:45 and midnight are not part of that day's report; they are
+stored and fall into no later report window, because each report covers a single
+calendar day starting at 00:00. Dependencies are installed when the image is
+built. The GitHub Actions workflow is unchanged.
 
 Configure the project's existing `.env` with:
 
@@ -309,28 +319,44 @@ This provides startup after login; it does not run Docker before login. See
 [Docker Desktop settings](https://docs.docker.com/desktop/settings-and-maintenance/settings/)
 and [Docker restart policies](https://docs.docker.com/engine/containers/start-containers-automatically/).
 
-The computer must be awake and Docker running at 17:45. Missed runs are skipped;
-starting the container does not immediately generate a report. To run manually:
+The computer must be awake and Docker running at 17:45. Missed hourly runs are
+recovered by the next run and by the report's own catch-up ingestion; a missed
+17:45 report is skipped, and starting the container does not generate one. To
+run manually:
 
 ```bash
-docker compose exec scheduler python -m scripts.run_daily_workflow
+docker compose exec scheduler python -m scripts.run_daily_workflow --mode ingest
+docker compose exec scheduler python -m scripts.run_daily_workflow --mode report
 ```
 
-Every invocation computes fresh UTC ingestion and report timestamps for the
-preceding 24 hours ending at the actual invocation time. It overrides configured
-`INGEST_*_TIME`, `REPORT_*_TIME`, `DATABASE_URL`, and `REPORT_OUTPUT_PATH` values
-for that invocation. A fresh temporary SQLite database is deleted after each
-run, including failed runs. No PostgreSQL container or migration is needed.
+`--mode report` is the default.
 
-Ingestion must succeed before report generation, and generation must succeed
-before the existing Telegram sender reads the report. Reports are split into
-messages by that sender. Failures and the 30-minute workflow timeout trigger a
-best-effort Telegram notification naming the failed stage and run time. A
-notification request can take up to 30 additional seconds. Overlapping manual
-and scheduled invocations are skipped while another invocation holds the lock.
+Every invocation computes fresh UTC timestamps ending at the actual invocation
+time: the last 2 hours for ingestion, or the current Istanbul calendar day for
+the report. It overrides configured `INGEST_*_TIME`, `REPORT_*_TIME`,
+`DATABASE_URL`, and `REPORT_OUTPUT_PATH` values for that invocation. Events are
+stored in the SQLite database `/app/output/data/activity-reporter.db` on the
+output volume. There is no retention limit yet, so the file grows with each
+day's events. No PostgreSQL container or migration is needed for a fresh volume;
+schema changes to an existing database still require `alembic upgrade head`.
+
+For the report, ingestion must succeed before report generation, and generation
+must succeed before the existing Telegram sender reads the report. Reports are
+split into messages by that sender. Report failures and the 30-minute workflow
+timeout trigger a best-effort Telegram notification naming the failed stage and
+run time. A notification request can take up to 30 additional seconds.
+
+Hourly ingestion failures are logged. Telegram is notified only on the third
+consecutive failure, and the streak resets after a successful run. Workflows do
+not lock against each other: SQLite allows one writer at a time, so an
+overlapping manual and scheduled run (or a very slow ingestion colliding with
+the report) can fail with `database is locked`. Avoid starting manual runs
+near the top of the hour or at 17:45.
 
 Reports and logs persist in the `activity-reporter-output` Compose volume:
 
+- `/app/output/data/activity-reporter.db`: stored events.
+- `/app/output/state/ingest-failures`: consecutive hourly ingestion failure count.
 - `/app/output/reports/activity-report.txt`: latest generated report.
 - `/app/output/logs/activity-reporter.txt`: application logs, appended each run.
 - `/app/output/logs/daily-workflow.log`: workflow status and date windows.

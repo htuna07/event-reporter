@@ -1,7 +1,6 @@
-"""Run the daily local equivalent of the GitHub Actions job."""
+"""Run the local scheduled workflows: hourly ingestion and the daily report."""
 
 import argparse
-import fcntl
 import json
 import os
 import signal
@@ -12,10 +11,15 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import IO, Mapping
+from zoneinfo import ZoneInfo
 
 import requests
 
 WORKFLOW_TIMEOUT_SECONDS = 30 * 60
+TIMEZONE = ZoneInfo("Europe/Istanbul")
+INGEST_LOOKBACK = timedelta(hours=2)
+INGEST_FAILURE_THRESHOLD = 3
+MODES = ("ingest", "report")
 
 
 class WorkflowFailure(Exception):
@@ -25,12 +29,30 @@ class WorkflowFailure(Exception):
         super().__init__(f"{stage}: {reason}")
 
 
-def utc_window(now: datetime) -> dict[str, str]:
+def _utc_text(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def time_window(mode: str, now: datetime) -> dict[str, str]:
+    """Return the UTC time window for a workflow mode.
+
+    `ingest` re-reads the last two hours; overlapping windows are safe because
+    ingestion is idempotent, and they absorb delayed source events. `report`
+    covers the current calendar day in Europe/Istanbul, from local midnight
+    until now.
+    """
     end = now.astimezone(timezone.utc).replace(microsecond=0)
-    start = end - timedelta(days=1)
+    if mode == "ingest":
+        start = end - INGEST_LOOKBACK
+    else:
+        local_midnight = end.astimezone(TIMEZONE).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        start = local_midnight.astimezone(timezone.utc)
+    names = ("INGEST",) if mode == "ingest" else ("INGEST", "REPORT")
     return {
-        f"{command}_{boundary}_TIME": value.isoformat().replace("+00:00", "Z")
-        for command in ("INGEST", "REPORT")
+        f"{name}_{boundary}_TIME": _utc_text(value)
+        for name in names
         for boundary, value in (("START", start), ("END", end))
     }
 
@@ -78,9 +100,7 @@ def run_stage(
         raise WorkflowFailure(stage, f"command exited with status {status}")
 
 
-def notify_failure(
-    environment: Mapping[str, str], failure: WorkflowFailure, run_time: datetime
-) -> bool:
+def send_notification(environment: Mapping[str, str], text: str) -> bool:
     token = environment.get("TELEGRAM_BOT_TOKEN")
     chat = environment.get("TELEGRAM_CHAT_ID")
     if not token or not chat:
@@ -88,16 +108,7 @@ def notify_failure(
     try:
         response = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={
-                "chat_id": chat,
-                "text": (
-                    "Daily Activity Report failed (local Docker workflow).\n"
-                    f"Run: {run_time.isoformat(timespec='seconds')}\n"
-                    f"Stage: {failure.stage}\n"
-                    f"Reason: {failure.reason}\n"
-                    "See Docker logs and output/logs for details."
-                ),
-            },
+            json={"chat_id": chat, "text": text},
             timeout=30,
         )
         response.raise_for_status()
@@ -107,93 +118,146 @@ def notify_failure(
         return False
 
 
+def notify_failure(
+    environment: Mapping[str, str], failure: WorkflowFailure, run_time: datetime
+) -> bool:
+    return send_notification(
+        environment,
+        "Daily Activity Report failed (local Docker workflow).\n"
+        f"Run: {run_time.isoformat(timespec='seconds')}\n"
+        f"Stage: {failure.stage}\n"
+        f"Reason: {failure.reason}\n"
+        "See Docker logs and output/logs for details.",
+    )
+
+
+def notify_ingest_failures(
+    environment: Mapping[str, str],
+    failure: WorkflowFailure,
+    run_time: datetime,
+    count: int,
+) -> bool:
+    return send_notification(
+        environment,
+        f"Hourly ingestion has failed {count} times in a row "
+        "(local Docker workflow).\n"
+        f"Latest run: {run_time.isoformat(timespec='seconds')}\n"
+        f"Reason: {failure.reason}\n"
+        "See Docker logs and output/logs for details.",
+    )
+
+
+def record_ingest_result(output: Path, succeeded: bool) -> int:
+    """Track consecutive ingestion failures; returns the current streak."""
+    path = output / "state" / "ingest-failures"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        previous = int(path.read_text().strip() or 0) if path.exists() else 0
+        streak = 0 if succeeded else previous + 1
+        path.write_text(str(streak))
+        return streak
+    except (OSError, ValueError):
+        return 0
+
+
 def run_workflow(
     environment: Mapping[str, str],
     *,
+    mode: str = "report",
     output: Path = Path("output"),
-    runtime: Path = Path("/run/activity-reporter"),
 ) -> int:
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of: {', '.join(MODES)}")
     values = dict(environment)
     now = datetime.now(timezone.utc)
     deadline = time.monotonic() + WORKFLOW_TIMEOUT_SECONDS
     stage = "setup"
     try:
-        runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with (runtime / "workflow.lock").open("a") as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                print("Daily workflow already running; skipping this invocation.", flush=True)
-                return 0
-
-            (output / "logs").mkdir(parents=True, exist_ok=True)
-            (output / "reports").mkdir(parents=True, exist_ok=True)
-            values.update(utc_window(now))
-            values["REPORT_PROVIDER"] = values.get("REPORT_PROVIDER") or "openai"
-            values["OPENAI_MODEL"] = values.get("OPENAI_MODEL") or "gpt-6-luna"
-            values["REPORT_OUTPUT_PATH"] = str(
-                output / "reports" / "activity-report.txt"
+        (output / "logs").mkdir(parents=True, exist_ok=True)
+        (output / "reports").mkdir(parents=True, exist_ok=True)
+        (output / "data").mkdir(parents=True, exist_ok=True)
+        values.update(time_window(mode, now))
+        values["REPORT_PROVIDER"] = values.get("REPORT_PROVIDER") or "openai"
+        values["OPENAI_MODEL"] = values.get("OPENAI_MODEL") or "gpt-6-luna"
+        values["REPORT_OUTPUT_PATH"] = str(
+            output / "reports" / "activity-report.txt"
+        )
+        values["DATABASE_URL"] = (
+            f"sqlite:///{output / 'data' / 'activity-reporter.db'}"
+        )
+        log(
+            f"{'Daily workflow' if mode == 'report' else 'Hourly ingestion'} "
+            f"started: {values['INGEST_START_TIME']} to {values['INGEST_END_TIME']}",
+            output,
+        )
+        try:
+            if mode == "report" and (
+                not values.get("TELEGRAM_BOT_TOKEN")
+                or not values.get("TELEGRAM_CHAT_ID")
+            ):
+                raise WorkflowFailure(
+                    "configuration", "Telegram token and chat ID are required"
+                )
+            application_log = str(output / "logs" / "activity-reporter.txt")
+            stage = "ingestion"
+            run_stage(
+                stage,
+                ["activity_reporter", "ingest", "--log-output", application_log],
+                values,
+                deadline,
             )
+            log("Ingestion completed.", output)
+            if mode == "ingest":
+                record_ingest_result(output, succeeded=True)
+                return 0
+            stage = "report generation"
+            with tempfile.TemporaryFile("w+") as report:
+                run_stage(
+                    stage,
+                    ["activity_reporter", "report", "--log-output", application_log],
+                    values,
+                    deadline,
+                    stdout=report,
+                )
+                report.seek(0)
+                stage = "Telegram delivery"
+                run_stage(
+                    stage,
+                    ["scripts.send_telegram_report"],
+                    values,
+                    deadline,
+                    stdin=report,
+                )
+            log("Daily workflow completed; report delivered to Telegram.", output)
+            return 0
+        except WorkflowFailure as failure:
+            label = "Daily workflow" if mode == "report" else "Hourly ingestion"
+            log(f"{label} failed: {failure}", output)
+            if mode == "ingest":
+                streak = record_ingest_result(output, succeeded=False)
+                if streak == INGEST_FAILURE_THRESHOLD:
+                    delivered = notify_ingest_failures(
+                        values, failure, now, streak
+                    )
+                    log(
+                        "Failure notification sent."
+                        if delivered
+                        else "Failure notification could not be sent.",
+                        output,
+                    )
+                return 1
+            delivered = notify_failure(values, failure, now)
             log(
-                f"Daily workflow started: {values['INGEST_START_TIME']} to "
-                f"{values['INGEST_END_TIME']}",
+                "Failure notification sent."
+                if delivered
+                else "Failure notification could not be sent.",
                 output,
             )
-            try:
-                if not values.get("TELEGRAM_BOT_TOKEN") or not values.get(
-                    "TELEGRAM_CHAT_ID"
-                ):
-                    raise WorkflowFailure(
-                        "configuration", "Telegram token and chat ID are required"
-                    )
-                with tempfile.TemporaryDirectory(
-                    prefix="activity-reporter-"
-                ) as temporary:
-                    work = Path(temporary)
-                    values["DATABASE_URL"] = f"sqlite:///{work / 'activity-reporter.db'}"
-                    application_log = str(output / "logs" / "activity-reporter.txt")
-                    stage = "ingestion"
-                    run_stage(
-                        stage,
-                        ["activity_reporter", "ingest", "--log-output", application_log],
-                        values,
-                        deadline,
-                    )
-                    log("Ingestion completed.", output)
-                    stage = "report generation"
-                    with (work / "report.txt").open("w+") as report:
-                        run_stage(
-                            stage,
-                            ["activity_reporter", "report", "--log-output", application_log],
-                            values,
-                            deadline,
-                            stdout=report,
-                        )
-                        report.seek(0)
-                        stage = "Telegram delivery"
-                        run_stage(
-                            stage,
-                            ["scripts.send_telegram_report"],
-                            values,
-                            deadline,
-                            stdin=report,
-                        )
-                log("Daily workflow completed; report delivered to Telegram.", output)
-                return 0
-            except WorkflowFailure as failure:
-                log(f"Daily workflow failed: {failure}", output)
-                delivered = notify_failure(values, failure, now)
-                log(
-                    "Failure notification sent."
-                    if delivered
-                    else "Failure notification could not be sent.",
-                    output,
-                )
-                return 1
+            return 1
     except OSError:
         failure = WorkflowFailure(stage, "local file or directory could not be accessed")
-        log(f"Daily workflow failed: {failure}", output)
-        if not notify_failure(values, failure, now):
+        log(f"Workflow failed: {failure}", output)
+        if mode == "report" and not notify_failure(values, failure, now):
             log("Failure notification could not be sent.", output)
         return 1
 
@@ -203,6 +267,10 @@ def main() -> int:
     parser.add_argument(
         "--environment", type=Path,
         help="runtime environment snapshot supplied by cron",
+    )
+    parser.add_argument(
+        "--mode", choices=MODES, default="report",
+        help="ingest: store recent events; report: ingest the day, report, and send",
     )
     arguments = parser.parse_args()
     values = dict(os.environ)
@@ -217,7 +285,7 @@ def main() -> int:
         except (OSError, ValueError):
             print("Runtime environment could not be loaded.", file=sys.stderr)
             return 1
-    return run_workflow(values)
+    return run_workflow(values, mode=arguments.mode)
 
 
 if __name__ == "__main__":

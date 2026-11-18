@@ -1,4 +1,3 @@
-import fcntl
 import io
 import json
 import os
@@ -17,7 +16,7 @@ from scripts.run_daily_workflow import (
     main,
     run_stage,
     run_workflow,
-    utc_window,
+    time_window,
 )
 
 
@@ -56,8 +55,7 @@ class DailyWorkflowTest(unittest.TestCase):
             raise WorkflowFailure(stage, self.failure_reason)
         if stage == "ingestion":
             database = Path(environment["DATABASE_URL"].removeprefix("sqlite:///"))
-            self.assertFalse(database.exists())
-            database.write_text("synthetic database")
+            self.assertEqual(database, self.output / "data" / "activity-reporter.db")
             self.databases.append(database)
         if stage == "report generation":
             streams["stdout"].write("Synthetic daily report\n")
@@ -65,10 +63,10 @@ class DailyWorkflowTest(unittest.TestCase):
         if stage == "Telegram delivery":
             self.delivered_reports.append(streams["stdin"].read())
 
-    def run_workflow(self):
-        return run_workflow(self.environment, output=self.output, runtime=self.runtime)
+    def run_workflow(self, mode="report"):
+        return run_workflow(self.environment, mode=mode, output=self.output)
 
-    def test_success_and_each_invocation_refreshes_dates_and_database(self):
+    def test_success_and_each_invocation_refreshes_dates(self):
         first = datetime(2026, 10, 14, 14, 45, tzinfo=timezone.utc)
         with patch("scripts.run_daily_workflow.datetime") as clock:
             clock.now.return_value = first
@@ -84,10 +82,11 @@ class DailyWorkflowTest(unittest.TestCase):
             self.assertEqual(environment["INGEST_END_TIME"], environment["REPORT_END_TIME"])
             self.assertEqual(environment["REPORT_PROVIDER"], "openai")
             self.assertEqual(environment["OPENAI_MODEL"], "gpt-6-luna")
+        self.assertEqual(self.calls[0][1]["INGEST_START_TIME"], "2026-10-13T21:00:00Z")
         self.assertEqual(self.calls[0][1]["INGEST_END_TIME"], "2026-10-14T14:45:00Z")
+        self.assertEqual(self.calls[3][1]["INGEST_START_TIME"], "2026-10-14T21:00:00Z")
         self.assertEqual(self.calls[3][1]["INGEST_END_TIME"], "2026-10-15T14:45:00Z")
-        self.assertEqual(len(set(self.databases)), 2)
-        self.assertTrue(all(not database.exists() for database in self.databases))
+        self.assertEqual(len(set(self.databases)), 1)
         self.assertEqual(self.delivered_reports, ["Synthetic daily report\n"] * 2)
         self.assertTrue((self.output / "reports" / "activity-report.txt").exists())
         self.post.assert_not_called()
@@ -109,7 +108,6 @@ class DailyWorkflowTest(unittest.TestCase):
                 self.assertIn(f"Stage: {stage}", message)
                 self.assertNotIn("synthetic-token", message)
         self.assertEqual(self.delivered_reports, [])
-        self.assertTrue(all(not database.exists() for database in self.databases))
 
     def test_timeout_notifies_and_does_not_send_report(self):
         self.failing_stage = "report generation"
@@ -125,12 +123,37 @@ class DailyWorkflowTest(unittest.TestCase):
         self.post.side_effect = ValueError("synthetic failure")
         self.assertEqual(self.run_workflow(), 1)
 
-    def test_overlapping_invocation_skips_all_commands(self):
-        self.runtime.mkdir()
-        with (self.runtime / "workflow.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self.assertEqual(self.run_workflow(), 0)
-        self.assertEqual(self.calls, [])
+    def test_ingest_mode_stores_recent_events_without_reporting(self):
+        self.environment.pop("TELEGRAM_BOT_TOKEN")
+        now = datetime(2026, 10, 14, 0, 0, tzinfo=timezone(timedelta(hours=3)))
+        with patch("scripts.run_daily_workflow.datetime") as clock:
+            clock.now.return_value = now
+            self.assertEqual(self.run_workflow("ingest"), 0)
+        self.assertEqual([stage for stage, _ in self.calls], ["ingestion"])
+        environment = self.calls[0][1]
+        self.assertEqual(environment["INGEST_START_TIME"], "2026-10-13T19:00:00Z")
+        self.assertEqual(environment["INGEST_END_TIME"], "2026-10-13T21:00:00Z")
+        self.assertNotIn("REPORT_START_TIME", environment)
+        self.assertEqual(self.delivered_reports, [])
+
+    def test_ingest_failures_notify_only_on_the_third_consecutive_failure(self):
+        self.failing_stage = "ingestion"
+        results = [self.run_workflow("ingest") for _ in range(4)]
+        self.assertEqual(results, [1, 1, 1, 1])
+        self.post.assert_called_once()
+        message = self.post.call_args.kwargs["json"]["text"]
+        self.assertIn("failed 3 times in a row", message)
+        self.assertNotIn("synthetic-token", message)
+
+    def test_successful_ingestion_resets_the_failure_streak(self):
+        self.failing_stage = "ingestion"
+        self.run_workflow("ingest")
+        self.run_workflow("ingest")
+        self.failing_stage = None
+        self.assertEqual(self.run_workflow("ingest"), 0)
+        self.failing_stage = "ingestion"
+        self.run_workflow("ingest")
+        self.run_workflow("ingest")
         self.post.assert_not_called()
 
     def test_missing_telegram_configuration_fails_before_ingestion(self):
@@ -154,7 +177,7 @@ class DailyWorkflowTest(unittest.TestCase):
             patch("scripts.run_daily_workflow.run_workflow", return_value=0) as run,
         ):
             self.assertEqual(main(), 0)
-        run.assert_called_once_with(values)
+        run.assert_called_once_with(values, mode="report")
 
     def test_entrypoint_saves_a_restricted_environment_for_cron(self):
         with (
@@ -191,11 +214,24 @@ class WorkflowStageTest(unittest.TestCase):
                 {}, time.monotonic() + 5, stdout=subprocess.DEVNULL,
             )
 
-    def test_window_crosses_local_midnight_and_year_boundary(self):
+    def test_report_window_is_the_local_calendar_day_so_far(self):
+        now = datetime(2026, 10, 14, 14, 45, 0, 123, tzinfo=timezone.utc)
+        window = time_window("report", now)
+        self.assertEqual(window["REPORT_START_TIME"], "2026-10-13T21:00:00Z")
+        self.assertEqual(window["REPORT_END_TIME"], "2026-10-14T14:45:00Z")
+        self.assertEqual(window["INGEST_START_TIME"], window["REPORT_START_TIME"])
+
+    def test_report_window_uses_the_local_date_across_the_year_boundary(self):
+        now = datetime(2026, 12, 31, 22, 30, tzinfo=timezone.utc)
+        window = time_window("report", now)
+        self.assertEqual(window["REPORT_START_TIME"], "2026-12-31T21:00:00Z")
+
+    def test_ingest_window_looks_back_two_hours_across_midnight(self):
         now = datetime(2027, 1, 1, 0, 5, 0, 123, tzinfo=timezone(timedelta(hours=3)))
-        window = utc_window(now)
-        self.assertEqual(window["INGEST_START_TIME"], "2026-12-30T21:05:00Z")
-        self.assertEqual(window["REPORT_END_TIME"], "2026-12-31T21:05:00Z")
+        window = time_window("ingest", now)
+        self.assertEqual(window["INGEST_START_TIME"], "2026-12-31T19:05:00Z")
+        self.assertEqual(window["INGEST_END_TIME"], "2026-12-31T21:05:00Z")
+        self.assertNotIn("REPORT_START_TIME", window)
 
 
 if __name__ == "__main__":
