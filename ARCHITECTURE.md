@@ -61,7 +61,7 @@ Loads `.env`, then reads and validates configuration from process environment va
 - `comma_separated`: Converts comma-separated configuration into a tuple.
 - `DatabaseSettings.from_environment`: Reads `DATABASE_URL`.
 - `IngestionSettings.from_environment`: Reads and validates the ingestion time range.
-- `ReportSettings.from_environment`: Reads actors, report range, selected report-provider settings, input limits, and the output path. `REPORT_PROVIDER` defaults to `anthropic` in the application; the GitHub Actions workflow and the Docker workflow default it to `openai` before invoking the application.
+- `ReportSettings.from_environment`: Reads actors, report range, selected report-provider settings, input limits, and the output path. `REPORT_PROVIDER` defaults to `openai` and `OPENAI_MODEL` to `gpt-6-luna`; Anthropic has no default model. The defaults live only in `config.py`.
 - `environment`: Loads `.env` without overriding exported values, then returns the process environment.
 
 ## Domain models
@@ -217,7 +217,7 @@ Defines the interface implemented by an LLM report generator.
 #### Report generator strategies
 
 - `reporting.py` contains `ReportService`, which remains unaware of the selected provider.
-- `reporters/factory.py` selects Anthropic (application default) or OpenAI from `REPORT_PROVIDER`.
+- `reporters/factory.py` selects OpenAI (default) or Anthropic from `REPORT_PROVIDER`.
 - `reporters/base.py` also holds the shared `REPORT_INSTRUCTIONS` prompt and orders events so failed, write, and collaboration activity precede read-only activity.
 - `reporters/base.py` validates and serializes report inputs once for every provider; each provider implementation owns only its SDK call.
 

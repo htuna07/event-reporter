@@ -73,6 +73,10 @@ class IngestionSettings:
         return settings
 
 
+DEFAULT_REPORT_PROVIDER = "openai"
+DEFAULT_REPORT_MODELS = {"openai": "gpt-6-luna"}
+
+
 @dataclass(frozen=True, slots=True)
 class ReportSettings:
     actors: tuple[str, ...]
@@ -91,8 +95,9 @@ class ReportSettings:
         actors = comma_separated(require(environment, "REPORT_ACTORS"))
         if not actors:
             raise ValueError("REPORT_ACTORS must contain at least one actor.")
-        provider = environment.get(
-            "REPORT_PROVIDER", "anthropic").strip().lower()
+        provider = (
+            environment.get("REPORT_PROVIDER") or DEFAULT_REPORT_PROVIDER
+        ).strip().lower()
         provider_settings = {
             "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"),
             "openai": ("OPENAI_API_KEY", "OPENAI_MODEL"),
@@ -119,7 +124,11 @@ class ReportSettings:
             ),
             provider=provider,
             api_key=require(environment, api_key_name),
-            model=require(environment, model_name),
+            model=(
+                environment.get(model_name)
+                or DEFAULT_REPORT_MODELS.get(provider)
+                or require(environment, model_name)
+            ),
             max_events=positive_integer(
                 environment,
                 "REPORT_MAX_EVENTS",

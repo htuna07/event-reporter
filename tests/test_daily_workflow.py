@@ -87,8 +87,6 @@ class DailyWorkflowTest(unittest.TestCase):
         for stage, environment in self.calls:
             self.assertEqual(environment["INGEST_START_TIME"], environment["REPORT_START_TIME"])
             self.assertEqual(environment["INGEST_END_TIME"], environment["REPORT_END_TIME"])
-            self.assertEqual(environment["REPORT_PROVIDER"], "openai")
-            self.assertEqual(environment["OPENAI_MODEL"], "gpt-6-luna")
         self.assertEqual(self.calls[0][1]["INGEST_START_TIME"], "2026-10-13T21:00:00Z")
         self.assertEqual(self.calls[0][1]["INGEST_END_TIME"], "2026-10-14T14:45:00Z")
         self.assertEqual(self.calls[3][1]["INGEST_START_TIME"], "2026-10-14T21:00:00Z")

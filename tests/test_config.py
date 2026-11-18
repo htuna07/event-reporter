@@ -19,6 +19,7 @@ class SettingsTest(unittest.TestCase):
                 "REPORT_ACTORS": "htuna07, Tuna",
                 "REPORT_START_TIME": "2026-09-25T00:00:00+03:00",
                 "REPORT_END_TIME": "2026-09-26T00:00:00+03:00",
+                "REPORT_PROVIDER": "anthropic",
                 "ANTHROPIC_API_KEY": "key",
                 "ANTHROPIC_MODEL": "model",
             }
@@ -41,6 +42,7 @@ class SettingsTest(unittest.TestCase):
             "REPORT_ACTORS": "actor",
             "REPORT_START_TIME": "2026-09-25T00:00:00Z",
             "REPORT_END_TIME": "2026-09-26T00:00:00Z",
+            "REPORT_PROVIDER": "anthropic",
             "ANTHROPIC_API_KEY": "key",
             "ANTHROPIC_MODEL": "model",
             "REPORT_MAX_EVENTS": "0",
@@ -64,6 +66,31 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.provider, "openai")
         self.assertEqual(settings.api_key, "key")
         self.assertEqual(settings.model, "model")
+
+    def test_openai_and_its_default_model_are_used_when_nothing_is_selected(self) -> None:
+        base = {
+            "REPORT_ACTORS": "actor",
+            "REPORT_START_TIME": "2026-09-25T00:00:00Z",
+            "REPORT_END_TIME": "2026-09-26T00:00:00Z",
+            "OPENAI_API_KEY": "key",
+        }
+        for blank in ({}, {"REPORT_PROVIDER": "", "OPENAI_MODEL": ""}):
+            with self.subTest(blank=blank):
+                settings = ReportSettings.from_environment({**base, **blank})
+                self.assertEqual(settings.provider, "openai")
+                self.assertEqual(settings.model, "gpt-6-luna")
+
+    def test_anthropic_has_no_default_model(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ANTHROPIC_MODEL"):
+            ReportSettings.from_environment(
+                {
+                    "REPORT_PROVIDER": "anthropic",
+                    "REPORT_ACTORS": "actor",
+                    "REPORT_START_TIME": "2026-09-25T00:00:00Z",
+                    "REPORT_END_TIME": "2026-09-26T00:00:00Z",
+                    "ANTHROPIC_API_KEY": "key",
+                }
+            )
 
     def test_report_settings_reject_unknown_provider(self) -> None:
         with self.assertRaisesRegex(ValueError, "REPORT_PROVIDER"):

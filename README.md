@@ -158,7 +158,7 @@ AWS_SESSION_TOKEN=optional_session_token
 REPORT_ACTORS=example-github-user,example-aws-user
 REPORT_START_TIME=2026-01-01T00:00:00Z
 REPORT_END_TIME=2026-01-02T00:00:00Z
-REPORT_PROVIDER=anthropic
+REPORT_PROVIDER=openai
 ANTHROPIC_API_KEY=anthropic_key
 ANTHROPIC_MODEL=your_anthropic_model
 OPENAI_API_KEY=openai_key
@@ -173,7 +173,7 @@ REPORT_OUTPUT_PATH=output/reports/activity-report.txt
 
 Reports are written to `output/reports/activity-report.txt` by default and are also printed to stdout. Set `REPORT_OUTPUT_PATH` to another location, or set it to an empty value to skip saving the file and print only to stdout.
 
-Running the application directly defaults to Anthropic. The GitHub Actions and Docker workflows default to OpenAI instead, unless `REPORT_PROVIDER` is set. Set `REPORT_PROVIDER=openai` to use OpenAI instead; only the selected provider's API key and model are required. Both providers use the same input limits and report format. Report generation rejects inputs above `REPORT_MAX_EVENTS` or `REPORT_MAX_INPUT_CHARACTERS` before making a provider request. Narrow the report range or deliberately raise these limits when a query exceeds them.
+Report generation defaults to OpenAI with the model `gpt-6-luna`. Set `REPORT_PROVIDER=anthropic` to use Anthropic instead, which also requires `ANTHROPIC_MODEL`; only the selected provider's API key and model are required. Both providers use the same input limits and report format. Report generation rejects inputs above `REPORT_MAX_EVENTS` or `REPORT_MAX_INPUT_CHARACTERS` before making a provider request. Narrow the report range or deliberately raise these limits when a query exceeds them.
 
 Start PostgreSQL if needed, then invoke either workflow:
 

@@ -216,8 +216,6 @@ def run_workflow(
         (output / "reports").mkdir(parents=True, exist_ok=True)
         (output / "data").mkdir(parents=True, exist_ok=True)
         values.update(time_window(mode, now))
-        values["REPORT_PROVIDER"] = values.get("REPORT_PROVIDER") or "openai"
-        values["OPENAI_MODEL"] = values.get("OPENAI_MODEL") or "gpt-6-luna"
         values["REPORT_OUTPUT_PATH"] = str(
             output / "reports" / "activity-report.txt"
         )
