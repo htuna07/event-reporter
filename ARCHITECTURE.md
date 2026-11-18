@@ -281,7 +281,7 @@ Read configuration
 
 ## Scripts
 
-- `scripts/run_daily_workflow.py`: `--mode ingest` stores the last 2 hours (overlapping windows, idempotent upserts) and notifies Telegram only after three consecutive failures. `--mode report` ingests the Europe/Istanbul calendar day so far, generates the report, and delivers it to Telegram. Both use the SQLite database on the output volume, do not lock against each other, enforce a 30-minute timeout, and report failures notify Telegram with the failed stage.
+- `scripts/run_daily_workflow.py`: `--mode ingest` stores the last 2 hours (overlapping windows, idempotent upserts) and notifies Telegram only after three consecutive failures. `--mode report` ingests the Europe/Istanbul calendar day so far, generates the report, appends a plain-text data notice when some sources failed to refresh (exit status 2 from `ingest`, details from `--failures-output`), and delivers it to Telegram. Both use the SQLite database on the output volume, do not lock against each other, enforce a 30-minute timeout, and report failures notify Telegram with the failed stage.
 - `scripts/container_entrypoint.py`: Writes the container environment to a restricted runtime file and starts cron.
 - `scripts/send_telegram_report.py`: Reads a plain-text report from stdin and sends it to Telegram, splitting long reports across messages.
 - `scripts/redact_raw_payloads.py`: Redacts already-retained payloads.
@@ -304,6 +304,7 @@ Read configuration
 - `tests/test_database_schema.py`: Verifies the generated identity and unique constraint.
 - `tests/test_redaction.py`: Verifies payload redaction.
 - `tests/test_logging.py`: Verifies log formats and secret-free output.
+- `tests/test_cli.py`: Verifies ingestion continues past failing sources and reports them.
 - `tests/test_daily_workflow.py`: Verifies the daily workflow stages, windows, ingestion failure streaks, and failure notification.
 
 Run them with `python -m pytest` (install `pytest` in addition to `requirements.txt`).

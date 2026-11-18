@@ -1,7 +1,10 @@
 import io
+import json
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -57,9 +60,20 @@ class CliTest(unittest.TestCase):
         repository = FakeRepository()
         healthy_source = SuccessfulSource()
         output = io.StringIO()
+        status = tempfile.TemporaryDirectory()
+        self.addCleanup(status.cleanup)
+        status_path = Path(status.name) / "state" / "status.json"
 
         with (
-            patch("sys.argv", ["activity-reporter", "ingest"]),
+            patch(
+                "sys.argv",
+                [
+                    "activity-reporter",
+                    "ingest",
+                    "--failures-output",
+                    str(status_path),
+                ],
+            ),
             patch("activity_reporter.cli.environment", return_value={}),
             patch(
                 "activity_reporter.cli.DatabaseSettings.from_environment",
@@ -78,7 +92,8 @@ class CliTest(unittest.TestCase):
         ):
             result = main()
 
-        self.assertEqual(result, 1)
+        self.assertEqual(result, 2)
+        self.assertEqual(json.loads(status_path.read_text()), {"failures": {"broken": []}})
         self.assertTrue(healthy_source.fetch_called)
         self.assertEqual(repository.upsert_calls, 1)
         self.assertIn("ingestion.source_failed", output.getvalue())

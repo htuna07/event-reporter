@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 from scripts.container_entrypoint import main as start_scheduler
 from scripts.run_daily_workflow import (
     WorkflowFailure,
+    data_notice,
     main,
     run_stage,
     run_workflow,
@@ -38,6 +39,8 @@ class DailyWorkflowTest(unittest.TestCase):
         self.databases = []
         self.delivered_reports = []
         self.failing_stage = None
+        self.ingest_failures = {}
+        self.ok_statuses = {}
         self.failure_reason = "command exited with status 1"
         self.notification = Mock()
         self.notification.json.return_value = {"ok": True}
@@ -53,7 +56,11 @@ class DailyWorkflowTest(unittest.TestCase):
         self.calls.append((stage, dict(environment)))
         if stage == self.failing_stage:
             raise WorkflowFailure(stage, self.failure_reason)
+        self.ok_statuses[stage] = streams.get("ok_statuses", (0,))
         if stage == "ingestion":
+            status = Path(arguments[arguments.index("--failures-output") + 1])
+            status.parent.mkdir(parents=True, exist_ok=True)
+            status.write_text(json.dumps({"failures": self.ingest_failures}))
             database = Path(environment["DATABASE_URL"].removeprefix("sqlite:///"))
             self.assertEqual(database, self.output / "data" / "activity-reporter.db")
             self.databases.append(database)
@@ -122,6 +129,40 @@ class DailyWorkflowTest(unittest.TestCase):
         self.assertEqual(self.run_workflow(), 1)
         self.post.side_effect = ValueError("synthetic failure")
         self.assertEqual(self.run_workflow(), 1)
+
+    def test_partial_ingestion_failure_adds_a_notice_but_still_reports(self):
+        self.ingest_failures = {"github": ["org/api", "org/web"], "aws_cloudtrail": []}
+        self.assertEqual(self.run_workflow(), 0)
+        self.assertEqual(self.ok_statuses["ingestion"], (0, 2))
+        (delivered,) = self.delivered_reports
+        self.assertTrue(delivered.startswith("Synthetic daily report\n"))
+        self.assertIn("Data notice", delivered)
+        self.assertIn("• GitHub could not be refreshed for: org/api, org/web.", delivered)
+        self.assertIn("• AWS CloudTrail could not be refreshed.", delivered)
+        saved = (self.output / "reports" / "activity-report.txt").read_text()
+        self.assertIn("Data notice", saved)
+        self.post.assert_not_called()
+
+    def test_complete_ingestion_adds_no_notice(self):
+        self.assertEqual(self.run_workflow(), 0)
+        self.assertEqual(self.delivered_reports, ["Synthetic daily report\n"])
+
+    def test_unreadable_ingestion_status_adds_a_generic_notice(self):
+        self.ingest_failures = None
+        original = self.fake_stage
+
+        def corrupt(stage, arguments, environment, deadline, **streams):
+            original(stage, arguments, environment, deadline, **streams)
+            if stage == "ingestion":
+                Path(arguments[arguments.index("--failures-output") + 1]).write_text("{")
+
+        with patch("scripts.run_daily_workflow.run_stage", side_effect=corrupt):
+            self.assertEqual(self.run_workflow(), 0)
+        self.assertIn("ingestion status could not be read", self.delivered_reports[0])
+
+    def test_hourly_ingestion_still_treats_partial_failure_as_a_failure(self):
+        self.assertEqual(self.run_workflow("ingest"), 0)
+        self.assertEqual(self.ok_statuses["ingestion"], (0,))
 
     def test_ingest_mode_stores_recent_events_without_reporting(self):
         self.environment.pop("TELEGRAM_BOT_TOKEN")
@@ -213,6 +254,20 @@ class WorkflowStageTest(unittest.TestCase):
                 ["timeit", "-n", "1", "-r", "1", "__import__('os')._exit(7)"],
                 {}, time.monotonic() + 5, stdout=subprocess.DEVNULL,
             )
+
+    def test_a_status_listed_as_acceptable_is_not_a_failure(self):
+        run_stage(
+            "synthetic partial command",
+            ["timeit", "-n", "1", "-r", "1", "__import__('os')._exit(2)"],
+            {}, time.monotonic() + 5, stdout=subprocess.DEVNULL, ok_statuses=(0, 2),
+        )
+
+    def test_data_notice_is_empty_without_failures_and_plain_text(self):
+        self.assertEqual(data_notice({}), "")
+        notice = data_notice({"github": ["org/api"], "custom_source": []})
+        self.assertIn("• GitHub could not be refreshed for: org/api.", notice)
+        self.assertIn("• custom_source could not be refreshed.", notice)
+        self.assertNotIn("**", notice)
 
     def test_report_window_is_the_local_calendar_day_so_far(self):
         now = datetime(2026, 10, 14, 14, 45, 0, 123, tzinfo=timezone.utc)

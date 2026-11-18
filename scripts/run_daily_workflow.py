@@ -20,6 +20,8 @@ TIMEZONE = ZoneInfo("Europe/Istanbul")
 INGEST_LOOKBACK = timedelta(hours=2)
 INGEST_FAILURE_THRESHOLD = 3
 MODES = ("ingest", "report")
+PARTIAL_INGESTION_STATUS = 2
+SOURCE_NAMES = {"github": "GitHub", "aws_cloudtrail": "AWS CloudTrail"}
 
 
 class WorkflowFailure(Exception):
@@ -76,6 +78,7 @@ def run_stage(
     *,
     stdin: IO | None = None,
     stdout: IO | None = None,
+    ok_statuses: tuple[int, ...] = (0,),
 ) -> None:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -96,8 +99,44 @@ def run_stage(
                 raise WorkflowFailure(stage, "30-minute workflow timeout") from None
     except OSError:
         raise WorkflowFailure(stage, "command could not be started") from None
-    if status != 0:
+    if status not in ok_statuses:
         raise WorkflowFailure(stage, f"command exited with status {status}")
+
+
+def read_ingest_failures(path: Path) -> dict[str, list[str]] | None:
+    """Return failed sources and their failures, or None if unreadable."""
+    try:
+        data = json.loads(path.read_text())
+        failures = data["failures"]
+        if not isinstance(failures, dict) or not all(
+            isinstance(items, list) for items in failures.values()
+        ):
+            return None
+        return {str(source): [str(item) for item in items] for source, items in failures.items()}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def data_notice(failures: dict[str, list[str]] | None) -> str:
+    """Describe incomplete data in plain text for the end of a report."""
+    if failures is None:
+        return (
+            "\n\nData notice\n"
+            "• The ingestion status could not be read.\n"
+            "This report may be missing recent activity."
+        )
+    if not failures:
+        return ""
+    lines = ["", "", "Data notice"]
+    for source, items in failures.items():
+        name = SOURCE_NAMES.get(source, source)
+        detail = f" for: {', '.join(items)}" if items else ""
+        lines.append(f"• {name} could not be refreshed{detail}.")
+    lines.append(
+        "Events newer than the last successful sync from these sources "
+        "may be missing from this report."
+    )
+    return "\n".join(lines)
 
 
 def send_notification(environment: Mapping[str, str], text: str) -> bool:
@@ -199,12 +238,25 @@ def run_workflow(
                     "configuration", "Telegram token and chat ID are required"
                 )
             application_log = str(output / "logs" / "activity-reporter.txt")
+            status_path = output / "state" / "ingest-status.json"
+            status_path.unlink(missing_ok=True)
             stage = "ingestion"
             run_stage(
                 stage,
-                ["activity_reporter", "ingest", "--log-output", application_log],
+                [
+                    "activity_reporter",
+                    "ingest",
+                    "--log-output",
+                    application_log,
+                    "--failures-output",
+                    str(status_path),
+                ],
                 values,
                 deadline,
+                # A report still goes out when some sources failed; it says so.
+                ok_statuses=(
+                    (0, PARTIAL_INGESTION_STATUS) if mode == "report" else (0,)
+                ),
             )
             log("Ingestion completed.", output)
             if mode == "ingest":
@@ -219,6 +271,14 @@ def run_workflow(
                     deadline,
                     stdout=report,
                 )
+                notice = data_notice(read_ingest_failures(status_path))
+                if notice:
+                    log("Report is incomplete; appending a data notice.", output)
+                    report.seek(0, os.SEEK_END)
+                    report.write(notice)
+                    report.flush()
+                    with Path(values["REPORT_OUTPUT_PATH"]).open("a") as saved:
+                        saved.write(notice)
                 report.seek(0)
                 stage = "Telegram delivery"
                 run_stage(

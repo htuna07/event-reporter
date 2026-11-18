@@ -1,4 +1,6 @@
 import argparse
+import json
+from pathlib import Path
 
 from activity_reporter.config import (
     DatabaseSettings,
@@ -14,6 +16,9 @@ from activity_reporter.reporters import build_report_generator
 from activity_reporter.sources.discovery import discover_sources
 
 logger = get_logger(__name__)
+
+# Exit status for an ingestion that stored what it could but had source failures.
+EXIT_PARTIAL_INGESTION = 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("text", "json"),
         default="text",
         help="render logs as text or JSON (default: text)",
+    )
+    parser.add_argument(
+        "--failures-output",
+        type=Path,
+        metavar="PATH",
+        help="ingest only: write failed sources and their failures to PATH as JSON",
     )
     return parser
 
@@ -87,6 +98,7 @@ def main() -> int:
         service = IngestionService(repository)
         result: dict[str, int] = {}
         failed_sources: list[str] = []
+        failures: dict[str, list[str]] = {}
         for source in sources:
             logger.log("ingestion.source_started", source=source.name)
             try:
@@ -102,10 +114,12 @@ def main() -> int:
                     error_type=type(error).__name__,
                 )
                 failed_sources.append(source.name)
+                failures[source.name] = []
                 continue
             source_failures = getattr(source, "failures", ())
             if source_failures:
                 failed_sources.append(source.name)
+                failures[source.name] = [str(item) for item in source_failures]
                 logger.error(
                     "ingestion.source_partial_failure",
                     source=source.name,
@@ -122,7 +136,18 @@ def main() -> int:
             sources=result,
             failed_sources=failed_sources,
         )
-        return 1 if failed_sources else 0
+        if arguments.failures_output is not None:
+            try:
+                arguments.failures_output.parent.mkdir(parents=True, exist_ok=True)
+                arguments.failures_output.write_text(
+                    json.dumps({"failures": failures}), encoding="utf-8"
+                )
+            except OSError as error:
+                logger.error(
+                    "ingestion.status_write_failed", error_type=type(error).__name__
+                )
+                return 1
+        return EXIT_PARTIAL_INGESTION if failed_sources else 0
 
     try:
         settings = ReportSettings.from_environment(values)

@@ -340,13 +340,24 @@ output volume. There is no retention limit yet, so the file grows with each
 day's events. No PostgreSQL container or migration is needed for a fresh volume;
 schema changes to an existing database still require `alembic upgrade head`.
 
-For the report, ingestion must succeed before report generation, and generation
-must succeed before the existing Telegram sender reads the report. Reports are
-split into messages by that sender. Report failures and the 30-minute workflow
+For the report, ingestion must finish before report generation, and generation
+must succeed before the existing Telegram sender reads the report. If only some
+sources or repositories fail during the report's own ingestion, the report is
+still generated from the stored events and sent, with a plain-text `Data notice`
+appended by the workflow (not the LLM) that names what could not be refreshed.
+The notice also lands in the saved report file. An ingestion that cannot start at
+all, a timeout, or a failed report generation still stops the run and notifies
+Telegram. Reports are split into messages by the Telegram sender. Report failures and the 30-minute workflow
 timeout trigger a best-effort Telegram notification naming the failed stage and
 run time. A notification request can take up to 30 additional seconds.
 
-Hourly ingestion failures are logged. Telegram is notified only on the third
+`python -m activity_reporter ingest` exits with status 2 when it stored what it
+could but some sources failed, and with 1 for fatal errors. With
+`--failures-output PATH` it writes the failed sources and their failures to PATH
+as JSON; the daily workflow uses this for the data notice.
+
+Hourly ingestion failures, including partial ones, are logged and count toward
+the failure streak. Telegram is notified only on the third
 consecutive failure, and the streak resets after a successful run. Workflows do
 not lock against each other: SQLite allows one writer at a time, so an
 overlapping manual and scheduled run (or a very slow ingestion colliding with
@@ -357,6 +368,7 @@ Reports and logs persist in the `activity-reporter-output` Compose volume:
 
 - `/app/output/data/activity-reporter.db`: stored events.
 - `/app/output/state/ingest-failures`: consecutive hourly ingestion failure count.
+- `/app/output/state/ingest-status.json`: failed sources from the latest ingestion.
 - `/app/output/reports/activity-report.txt`: latest generated report.
 - `/app/output/logs/activity-reporter.txt`: application logs, appended each run.
 - `/app/output/logs/daily-workflow.log`: workflow status and date windows.
