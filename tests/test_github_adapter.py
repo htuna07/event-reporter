@@ -81,6 +81,50 @@ class GitHubAdapterTest(unittest.TestCase):
         self.assertEqual(event.content_excerpt, "Please add the migration test.")
         self.assertEqual(event.raw_payload["payload"]["comment"]["body"], "[OMITTED]")
 
+    def test_keeps_safe_commit_subjects_for_push_events(self) -> None:
+        event = GitHubAdapter().adapt(
+            {
+                "id": "126",
+                "type": "PushEvent",
+                "created_at": "2026-09-25T12:00:00Z",
+                "actor": {"login": "octocat"},
+                "repo": {"name": "example/project"},
+                "payload": {
+                    "ref": "refs/heads/main",
+                    "commits": [
+                        {
+                            "message": "Add retry to consumer\n\nLong body is dropped.",
+                            "author": {"name": "Someone", "email": "someone@example.com"},
+                        },
+                        {"message": "Rotate token value abc123"},
+                        {"message": "Fix   spacing in logs"},
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(event.content_excerpt, "Add retry to consumer; Fix spacing in logs")
+        self.assertNotIn("someone@example.com", event.content_excerpt)
+        self.assertEqual(
+            event.raw_payload["payload"]["commits"][0]["message"], "[OMITTED]"
+        )
+
+    def test_bounds_commit_excerpt_and_ignores_push_without_commits(self) -> None:
+        base = {
+            "id": "127",
+            "type": "PushEvent",
+            "created_at": "2026-09-25T12:00:00Z",
+            "actor": {"login": "octocat"},
+            "repo": {"name": "example/project"},
+        }
+        long = GitHubAdapter().adapt(
+            {**base, "payload": {"commits": [{"message": "x" * 400}, {"message": "y" * 400}]}}
+        )
+        empty = GitHubAdapter().adapt({**base, "payload": {"ref": "refs/heads/main"}})
+
+        self.assertEqual(len(long.content_excerpt), 500)
+        self.assertIsNone(empty.content_excerpt)
+
 
 if __name__ == "__main__":
     unittest.main()

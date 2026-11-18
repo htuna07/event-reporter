@@ -79,6 +79,7 @@ the end.
 - `actor`: `actor.login`
 - `action`: event type plus its meaningful action, such as `pull_request.merged`, `pull_request_review.approved`, or `push`
 - `resource`: pull request or issue URL and title when available; otherwise repository and ref, or repository name
+- `content_excerpt`: the first 280 characters of a comment or review body, or, for pushes, the commit subjects (first line of each message, at most 500 characters); anything that looks credential-related is skipped
 
 ### CloudTrail mapping
 

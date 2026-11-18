@@ -142,7 +142,31 @@ _UNSAFE_CONTENT = re.compile(
 )
 
 
+_COMMIT_EXCERPT_LIMIT = 500
+
+
+def _commit_excerpt(details: dict[str, Any]) -> str | None:
+    commits = details.get("commits")
+    if not isinstance(commits, list):
+        return None
+    subjects: list[str] = []
+    for commit in commits:
+        message = commit.get("message") if isinstance(commit, dict) else None
+        if not isinstance(message, str):
+            continue
+        lines = message.strip().splitlines()
+        subject = " ".join(lines[0].split()) if lines else ""
+        if subject and not _UNSAFE_CONTENT.search(subject):
+            subjects.append(subject)
+    if not subjects:
+        return None
+    return "; ".join(subjects)[:_COMMIT_EXCERPT_LIMIT]
+
+
 def _content_excerpt(details: dict[str, Any]) -> str | None:
+    commits = _commit_excerpt(details)
+    if commits:
+        return commits
     for key in ("comment", "review"):
         item = details.get(key)
         if isinstance(item, dict) and isinstance(item.get("body"), str):
