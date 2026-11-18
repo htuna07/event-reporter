@@ -66,10 +66,17 @@ class GitHubSource(EventSource):
                 yield from self._fetch_repository(repository, start, end)
             except Exception as error:
                 self.failures.append(repository_name)
+                context: dict[str, Any] = {}
+                status_code = getattr(
+                    getattr(error, "response", None), "status_code", None
+                )
+                if isinstance(status_code, int):
+                    context["status_code"] = status_code
                 logger.error(
                     "github.repository_fetch_failed",
                     repository=repository_name,
                     error_type=type(error).__name__,
+                    **context,
                 )
 
     def _fetch_repository(

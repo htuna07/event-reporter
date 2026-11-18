@@ -1,7 +1,10 @@
 import unittest
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import requests
+from botocore.exceptions import ClientError
 
 from activity_reporter.sources.cloudtrail import CloudTrailSource
 from activity_reporter.sources.github import GitHubSource, Repository
@@ -124,6 +127,25 @@ class SourceTest(unittest.TestCase):
         self.assertEqual(session.calls, 3)
         self.assertEqual(source.failures, ["private/project"])
 
+    def test_github_logs_the_http_status_of_a_failed_repository(self) -> None:
+        error = requests.HTTPError(
+            "unauthorized", response=SimpleNamespace(status_code=401)
+        )
+        source = GitHubSource(
+            (Repository("private", "project"),),
+            session=FakeRequestsSession([error]),
+        )
+
+        with patch("activity_reporter.sources.github.logger") as logger:
+            list(source.fetch(START, END))
+
+        logger.error.assert_called_once_with(
+            "github.repository_fetch_failed",
+            repository="private/project",
+            error_type="HTTPError",
+            status_code=401,
+        )
+
     def test_cloudtrail_uses_the_sdk_paginator(self) -> None:
         paginator = FakePaginator()
         session = FakeBotoSession(paginator)
@@ -163,6 +185,28 @@ class SourceTest(unittest.TestCase):
 
         self.assertEqual([event["EventId"] for event in events], ["1"])
         self.assertEqual(source.failures, ["broken-region/Tuna"])
+
+    def test_cloudtrail_logs_the_aws_error_code_of_a_failed_lookup(self) -> None:
+        class DeniedSession(FakeBotoSession):
+            def client(self, name: str, region_name: str):
+                raise ClientError(
+                    {"Error": {"Code": "AccessDenied", "Message": "private detail"}},
+                    "LookupEvents",
+                )
+
+        source = CloudTrailSource(
+            ("eu-central-1",), ("Tuna",), session=DeniedSession(FakePaginator())
+        )
+
+        with patch("activity_reporter.sources.cloudtrail.logger") as logger:
+            list(source.fetch(START, END))
+
+        logger.error.assert_called_once_with(
+            "cloudtrail.lookup_failed",
+            region="eu-central-1",
+            error_type="ClientError",
+            error_code="AccessDenied",
+        )
 
     def test_cloudtrail_accepts_legacy_actor_setting(self) -> None:
         source = CloudTrailSource.from_environment(

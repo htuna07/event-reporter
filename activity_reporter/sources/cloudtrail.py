@@ -83,8 +83,19 @@ class CloudTrailSource(EventSource):
                 except Exception as error:
                     lookup = f"{region}/{actor}"
                     self.failures.append(lookup)
+                    context: dict[str, Any] = {}
+                    error_response = getattr(error, "response", None)
+                    code = (
+                        error_response.get("Error", {}).get("Code")
+                        if isinstance(error_response, dict)
+                        and isinstance(error_response.get("Error"), dict)
+                        else None
+                    )
+                    if isinstance(code, str):
+                        context["error_code"] = code
                     logger.error(
                         "cloudtrail.lookup_failed",
                         region=region,
                         error_type=type(error).__name__,
+                        **context,
                     )
