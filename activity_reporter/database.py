@@ -26,6 +26,9 @@ from activity_reporter.logging import get_logger
 
 logger = get_logger(__name__)
 
+# SQLite allows one writer; wait for a concurrent writer instead of failing.
+SQLITE_BUSY_TIMEOUT_SECONDS = 30
+
 
 class Base(DeclarativeBase):
     pass
@@ -258,6 +261,13 @@ def build_repository(database_url: str) -> EventRepository:
                 parents=True,
                 exist_ok=True,
             )
-    repository = EventRepository(create_engine(url, pool_pre_ping=True))
+    connect_args = (
+        {"timeout": SQLITE_BUSY_TIMEOUT_SECONDS}
+        if url.get_backend_name() == "sqlite"
+        else {}
+    )
+    repository = EventRepository(
+        create_engine(url, pool_pre_ping=True, connect_args=connect_args)
+    )
     logger.debug("database.repository_initialized", dialect=repository.engine.dialect.name)
     return repository

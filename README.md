@@ -359,10 +359,10 @@ as JSON; the daily workflow uses this for the data notice.
 Hourly ingestion failures, including partial ones, are logged and count toward
 the failure streak. Telegram is notified only on the third
 consecutive failure, and the streak resets after a successful run. Workflows do
-not lock against each other: SQLite allows one writer at a time, so an
-overlapping manual and scheduled run (or a very slow ingestion colliding with
-the report) can fail with `database is locked`. Avoid starting manual runs
-near the top of the hour or at 17:45.
+not lock against each other. SQLite allows one writer at a time, so a run that
+finds the database busy waits up to 30 seconds for the other writer before
+failing with `database is locked`. Avoid starting manual runs near the top of
+the hour or at 17:45.
 
 Reports and logs persist in the `activity-reporter-output` Compose volume:
 

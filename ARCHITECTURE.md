@@ -193,7 +193,8 @@ Defines the SQLAlchemy table:
 
 Creates the SQLAlchemy engine and repository from `DATABASE_URL`. PostgreSQL
 and SQLite URL schemes are supported. Parent directories for file-backed
-SQLite databases are created when needed.
+SQLite databases are created when needed. SQLite connections wait up to 30
+seconds for a concurrent writer (`busy_timeout`) before failing.
 
 ## Application services
 
