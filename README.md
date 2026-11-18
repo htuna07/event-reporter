@@ -39,7 +39,7 @@ Example User finalized and merged the message-consumer resilience feature, handl
 Activity Reporter has two independent workflows:
 
 1. `ingest` discovers configured event sources, fetches raw events, converts them to a common format, and stores them in PostgreSQL or SQLite.
-2. `report` queries stored events by an exact actor list and time range, then asks Anthropic to write a report.
+2. `report` queries stored events by an exact actor list and time range, then asks the selected provider (Anthropic or OpenAI) to write a report.
 
 The application loads `.env` from the project directory. Variables already exported in the process environment take precedence.
 
@@ -172,7 +172,7 @@ REPORT_OUTPUT_PATH=output/reports/activity-report.txt
 
 Reports are written to `output/reports/activity-report.txt` by default and are also printed to stdout. Set `REPORT_OUTPUT_PATH` to another location, or set it to an empty value to skip saving the file and print only to stdout.
 
-Report generation defaults to Anthropic. Set `REPORT_PROVIDER=openai` to use OpenAI instead; only the selected provider's API key and model are required. Both providers use the same input limits and report format. Report generation rejects inputs above `REPORT_MAX_EVENTS` or `REPORT_MAX_INPUT_CHARACTERS` before making a provider request. Narrow the report range or deliberately raise these limits when a query exceeds them.
+Running the application directly defaults to Anthropic. The GitHub Actions and Docker workflows default to OpenAI instead, unless `REPORT_PROVIDER` is set. Set `REPORT_PROVIDER=openai` to use OpenAI instead; only the selected provider's API key and model are required. Both providers use the same input limits and report format. Report generation rejects inputs above `REPORT_MAX_EVENTS` or `REPORT_MAX_INPUT_CHARACTERS` before making a provider request. Narrow the report range or deliberately raise these limits when a query exceeds them.
 
 Start PostgreSQL if needed, then invoke either workflow:
 
@@ -180,6 +180,13 @@ Start PostgreSQL if needed, then invoke either workflow:
 source scripts/start_postgres.sh
 python -m activity_reporter ingest
 python -m activity_reporter report
+```
+
+## Tests
+
+```bash
+pip install pytest
+python -m pytest
 ```
 
 ## Logging
